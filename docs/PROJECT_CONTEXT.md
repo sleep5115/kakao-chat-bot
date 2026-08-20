@@ -1,6 +1,6 @@
 # KakaoTalk Playground Bot — 프로젝트 컨텍스트
 
-최종 갱신: 2026-08-12
+최종 갱신: 2026-08-20
 
 ## 프로젝트 기준
 
@@ -24,7 +24,7 @@ PostgreSQL / 외부 API / AI API
 
 Android와 Iris는 KakaoTalk Gateway로 사용하고 명령 처리, 비즈니스 로직, 권한 통제와 데이터 보존은 Backend가 담당한다.
 
-## 현재 상태 — 루팅 완료
+## 현재 상태 — 루팅 및 Iris Gateway 준비 완료
 
 기기:
 
@@ -121,13 +121,94 @@ C:\Users\Administrator\Android\SM-J600L\tools\odin
 C:\Users\Administrator\Android\SM-J600L\tools\iris\v0.32
 ```
 
+## KakaoTalk 및 Iris 구성 완료
+
+2026-08-20 완료 및 검증 내용:
+
+- 공식 KakaoTalk 설치 및 봇 계정 로그인 완료
+- 확인 당시 KakaoTalk 패키지 `com.kakao.talk`, 앱 버전 `26.7.1`
+- 나와의 채팅과 테스트 오픈채팅에서 메시지 생성 완료
+- 공식 Iris `v0.32` APK를 `/data/local/tmp/Iris.apk`에 설치
+- Iris를 root `app_process`의 `party.qwer.iris.Main`으로 실행
+- Iris가 KakaoTalk DB를 읽어 테스트 메시지를 감지하는 것 확인
+- 봇 사용자 ID 자동 탐지 및 Iris 설정 반영 완료
+- Iris WebSocket에서 실시간 메시지 이벤트 수신 확인
+- 나와의 채팅에 Iris `/reply` API로 `Iris 양방향 연결 테스트 성공` 전송 확인
+- Dashboard와 `/config` 응답 확인
+
+테스트 중 채팅 내용이나 방 이름은 로그 및 문서에 저장하지 않았다. 봇 사용자 ID도 저장소에 기록하지 않는다.
+
+## Iris 자동 시작
+
+Magisk의 공식 `service.d` 방식으로 다음 스크립트를 기기에 설치했다.
+
+```text
+/data/adb/service.d/iris.sh
+소유자: root:root
+권한: 0755
+SELinux context: u:object_r:adb_data_file:s0
+```
+
+스크립트 동작:
+
+1. Android의 `sys.boot_completed=1`을 기다림
+2. 추가로 15초 대기
+3. `/data/local/tmp/Iris.apk` 존재 여부 확인
+4. 기존 `party.qwer.iris.Main` 프로세스가 있으면 중복 실행하지 않음
+5. 없으면 root `app_process`로 Iris 실행
+6. 로그와 PID를 각각 아래 경로에 기록
+
+```text
+/data/local/tmp/iris-autostart.log
+/data/local/tmp/iris.pid
+```
+
+수동 재시작 테스트와 실제 휴대폰 재부팅 테스트를 모두 완료했다. 재부팅 후 다음을 확인했다.
+
+```text
+Magisk root 정상
+Iris 자동 실행 정상
+TCP 3000 listen 정상
+/config 응답 및 기존 botId 복원 정상
+DB Polling / DBObserver / Notification Poller 시작 정상
+```
+
+재부팅 후 CPU는 8코어 합계 기준 약 94.5% idle이었고 Iris 메모리 사용량은 약 28 MiB였다. 초기 부팅 직후의 일시적인 느려짐 외에 Iris가 CPU를 지속 점유하는 상태는 아니었다.
+
+주의: `/data/local/tmp/Iris.apk`를 삭제하거나 이동하면 자동 시작이 실패한다.
+
+## Iris 접속 방식
+
+Iris는 휴대폰 화면에 일반 앱 UI를 띄우는 방식이 아니라 root 권한의 백그라운드 프로세스로 실행된다. USB 케이블이나 PC는 설치, 제어, 로그 확인과 개발 중 포트 전달에 편리하지만 Iris 실행 자체에는 필요하지 않다.
+
+USB 연결 중 PC에서 Dashboard를 사용할 때:
+
+```powershell
+$adb = 'C:\Users\Administrator\Desktop\platform-tools\adb.exe'
+& $adb forward tcp:3000 tcp:3000
+```
+
+```text
+http://127.0.0.1:3000/dashboard
+```
+
+같은 Wi-Fi에서는 휴대폰의 현재 IP를 확인한 뒤 다음 주소를 사용한다.
+
+```text
+http://[ANDROID_IP]:3000/dashboard
+```
+
+마지막으로 확인한 회사 Wi-Fi 주소는 `172.16.11.47`이었지만 DHCP 주소이므로 다시 확인해야 한다. 회사 Wi-Fi에서는 약 50% 패킷 손실과 약 971 ms 지연이 관측되어 직접 접속이 불안정했다. 개인 Wi-Fi에서는 다시 측정한다.
+
+Lightsail 같은 외부 서버에서는 휴대폰의 사설 IP로 직접 접근할 수 없다. Iris의 3000 포트를 공용 인터넷에 노출하지 말고, 배포 단계에서 휴대폰의 outbound push, Tailscale 또는 인증된 reverse tunnel 중 하나를 선택한다.
+
 ## 현재 재개 지점
 
-- KakaoTalk: 공장초기화 후 아직 설치/로그인 완료되지 않음
-- Iris: 공식 최신 안정 릴리스 `v0.32` 다운로드와 SHA-256 검증까지만 완료, 기기에서 아직 실행하지 않음
-- 마지막 확인 Wi-Fi IPv4: `172.16.11.47` (DHCP 주소이므로 재개 시 다시 조회)
-- 공장초기화 직후 시스템이 기본 앱을 `dex2oat`로 최적화하며 일시적으로 매우 느렸음
-- 당시 높은 CPU 사용 주체는 `system_server`, Google Play 서비스와 기본 앱 최적화였고 root 실패 징후는 없었음
+- 루팅, Magisk, KakaoTalk 로그인, Iris 설치, 양방향 통신과 재부팅 자동 시작까지 완료
+- 오늘 마지막 실기기 검증 시 root, Iris 프로세스, TCP 3000, `/config`가 모두 정상이었음
+- 문서 갱신 시점에는 USB가 분리되어 `adb devices`에 기기가 나타나지 않았음
+- Python/FastAPI Backend 코드는 아직 작성하지 않음
+- 다음 작업은 로컬 MVP Backend를 만들고 `!핑 → 퐁` 왕복을 구현하는 것
 
 Iris 공식 파일 검증값:
 
@@ -141,78 +222,49 @@ SHA-256: 3d6f970c41b340d785a6d5823d2f149d08f3c1d87f93ef1e9c9ca9e68eef8db8
 
 `iris_control.ps1`도 검토했다. APK를 `/data/local/tmp/Iris.apk`로 복사하고 root `app_process`로 `party.qwer.iris.Main`을 실행하는 구조다.
 
-## 주말 재개 순서
+## 다음 작업 순서
 
-### 1. 기기와 root 재확인
+### 1. 기기 연결 시 상태 재확인
 
 ```powershell
 $adb = 'C:\Users\Administrator\Desktop\platform-tools\adb.exe'
 & $adb devices -l
 & $adb shell magisk -c
 & $adb shell su -c id
+& $adb shell su -c 'ss -ltnp'
 ```
 
-기대 결과에 `30.7`과 `uid=0(root)`가 있어야 한다.
+기대 결과에 `30.7`, `uid=0(root)`와 TCP `3000` listen 상태가 있어야 한다. Iris가 이미 자동 실행되므로 APK 설치나 수동 실행을 반복하지 않는다.
 
-### 2. 기기 안정화 확인
-
-초기 최적화가 끝났는지 다음으로 확인한다.
+### 2. 개발 중 USB 포트 전달
 
 ```powershell
-& $adb shell uptime
-& $adb shell top -b -n 1 -m 10
+& $adb forward tcp:3000 tcp:3000
 ```
 
-`dex2oat`가 계속 높은 CPU를 사용하면 충전 상태로 잠시 더 둔다.
-
-### 3. KakaoTalk 준비
-
-1. Google Play 또는 Galaxy Store의 공식 KakaoTalk 설치
-2. 개인 메인 계정이 아닌 봇 전용 Kakao 계정으로 로그인
-3. KakaoTalk 채팅 목록까지 정상 진입 확인
-4. 봇을 사용할 테스트 채팅방 준비
-
-계정 인증과 약관 동의는 사용자가 직접 수행한다.
-
-### 4. Iris 설치와 실행
-
-공식 저장소의 최신 릴리스가 여전히 `v0.32`인지 먼저 확인한다. 버전이 바뀌었다면 공식 GitHub의 릴리스 자산과 digest를 다시 검증한다.
-
-준비된 검증 APK 경로:
+### 3. 첫 Backend MVP
 
 ```text
-C:\Users\Administrator\Android\SM-J600L\tools\iris\v0.32\Iris.apk
-```
-
-공식 방식대로 APK를 `/data/local/tmp/Iris.apk`에 복사하고 `iris_control.ps1`로 start/status를 수행한다. Superuser 팝업이 나오면 Iris 관련 요청인지 확인한 뒤 허용한다.
-
-### 5. Dashboard 확인
-
-기기 IP를 다시 구한다.
-
-```powershell
-& $adb shell ip -4 addr show wlan0
-```
-
-PC 브라우저에서 다음에 접속한다.
-
-```text
-http://[ANDROID_IP]:3000/dashboard
-```
-
-Iris 포트 `3000`은 인터넷에 직접 노출하지 않는다.
-
-### 6. 첫 통합 테스트
-
-```text
-KakaoTalk: !핑
+KakaoTalk 테스트방: !핑
 → Iris
 → Local FastAPI
 → Iris
 → KakaoTalk: 퐁
 ```
 
-통신이 확인된 뒤 room_id/sender_id 확인, PostgreSQL 메시지 저장, 입퇴장 관리, 게임 API, AI 기능 순으로 확장한다.
+FastAPI에서 Iris WebSocket에 연결해 이벤트를 받고, `!핑` 명령만 식별한 뒤 Iris `/reply`를 호출한다. 먼저 나와의 채팅이나 테스트방에서만 검증한다.
+
+### 4. 기능 확장
+
+통신이 확인된 뒤 다음 순서로 확장한다.
+
+1. 환경설정 및 비밀값 분리
+2. `room_id` / `sender_id` 기반 허용 목록과 권한 관리
+3. PostgreSQL 메시지 저장 및 보존 정책
+4. 입퇴장 관리와 게임 API
+5. AI API 연동
+6. Docker 구성과 Lightsail 배포
+7. 휴대폰과 외부 Backend 사이의 안전한 네트워크 경로 구성
 
 ## 안전 규칙
 
