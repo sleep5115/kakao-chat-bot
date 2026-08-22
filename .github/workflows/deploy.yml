@@ -63,3 +63,11 @@ jobs:
             done
             test "$(docker inspect kakao-bot --format '{{.State.Health.Status}}')" = "healthy"
             docker exec kakao-bot python -c "import urllib.request; response=urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5); assert response.status == 200"
+            for attempt in $(seq 1 30); do
+              health="$(docker inspect discord-kakao-bot --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')"
+              if [ "$health" = "healthy" ]; then
+                break
+              fi
+              sleep 2
+            done
+            test "$(docker inspect discord-kakao-bot --format '{{.State.Health.Status}}')" = "healthy"

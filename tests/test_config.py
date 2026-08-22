@@ -74,6 +74,48 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.message_retention_days, 14)
         self.assertEqual(settings.message_max_chars, 2000)
 
+    def test_discord_bridge_settings_are_loaded(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "DISCORD_BOT_TOKEN": "token",
+                "DISCORD_GUILD_ID": "100",
+                "DISCORD_CHANNEL_ID": "200",
+                "DISCORD_ALLOWED_USER_IDS": "300,301",
+                "DISCORD_ALLOWED_ROLE_IDS": "400",
+                "DISCORD_KAKAO_ROOM_ID": "500",
+                "DISCORD_BRIDGE_SECRET": "secret",
+                "DISCORD_MAX_MESSAGE_CHARS": "700",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+            settings.validate_discord_bot()
+
+        self.assertEqual(settings.discord_guild_id, "100")
+        self.assertEqual(settings.discord_channel_id, "200")
+        self.assertEqual(
+            settings.discord_allowed_user_ids, frozenset({"300", "301"})
+        )
+        self.assertEqual(settings.discord_allowed_role_ids, frozenset({"400"}))
+        self.assertEqual(settings.discord_kakao_room_id, "500")
+        self.assertEqual(settings.discord_max_message_chars, 700)
+
+    def test_discord_bot_requires_core_settings(self) -> None:
+        with self.assertRaises(ConfigError):
+            Settings().validate_discord_bot()
+
+    def test_discord_ids_must_be_numeric(self) -> None:
+        settings = Settings(
+            discord_bot_token="token",
+            discord_guild_id="not-an-id",
+            discord_kakao_room_id="500",
+            discord_bridge_secret="secret",
+        )
+
+        with self.assertRaises(ConfigError):
+            settings.validate_discord_bot()
+
 
 if __name__ == "__main__":
     unittest.main()

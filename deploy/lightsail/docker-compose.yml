@@ -27,6 +27,38 @@ services:
     networks:
       - pickty-infra
 
+  discord-kakao-bot:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: discord-kakao-bot
+    restart: unless-stopped
+    env_file:
+      - ${KAKAO_BOT_ENV_FILE:-/home/ubuntu/.config/kakao-bot/runtime.env}
+    environment:
+      DISCORD_BRIDGE_API_URL: http://kakao-bot:8000
+    command:
+      - python
+      - -m
+      - kakao_bot.discord_bridge
+    depends_on:
+      kakao-bot:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import pathlib,sys;
+          sys.exit(0 if pathlib.Path('/tmp/discord-kakao-ready').is_file() else 1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - pickty-infra
+
 networks:
   pickty-infra:
     external: true

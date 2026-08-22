@@ -15,6 +15,10 @@ def _csv_set(value: str | None) -> frozenset[str]:
     return frozenset(item.strip() for item in value.split(",") if item.strip())
 
 
+def _optional_env(name: str) -> str | None:
+    return os.getenv(name, "").strip() or None
+
+
 def _positive_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if raw is None:
@@ -58,6 +62,15 @@ class Settings:
     iris_reconnect_initial_seconds: float = 1.0
     iris_reconnect_max_seconds: float = 30.0
     dedup_cache_size: int = 1000
+    discord_bot_token: str | None = None
+    discord_guild_id: str | None = None
+    discord_channel_id: str | None = None
+    discord_allowed_user_ids: frozenset[str] = frozenset()
+    discord_allowed_role_ids: frozenset[str] = frozenset()
+    discord_kakao_room_id: str | None = None
+    discord_bridge_secret: str | None = None
+    discord_bridge_api_url: str = "http://kakao-bot:8000"
+    discord_max_message_chars: int = 1000
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     log_level: str = "INFO"
@@ -103,6 +116,23 @@ class Settings:
             dedup_cache_size=_positive_int(
                 "BOT_DEDUP_CACHE_SIZE", defaults.dedup_cache_size
             ),
+            discord_bot_token=_optional_env("DISCORD_BOT_TOKEN"),
+            discord_guild_id=_optional_env("DISCORD_GUILD_ID"),
+            discord_channel_id=_optional_env("DISCORD_CHANNEL_ID"),
+            discord_allowed_user_ids=_csv_set(
+                os.getenv("DISCORD_ALLOWED_USER_IDS")
+            ),
+            discord_allowed_role_ids=_csv_set(
+                os.getenv("DISCORD_ALLOWED_ROLE_IDS")
+            ),
+            discord_kakao_room_id=_optional_env("DISCORD_KAKAO_ROOM_ID"),
+            discord_bridge_secret=_optional_env("DISCORD_BRIDGE_SECRET"),
+            discord_bridge_api_url=os.getenv(
+                "DISCORD_BRIDGE_API_URL", defaults.discord_bridge_api_url
+            ).rstrip("/"),
+            discord_max_message_chars=_positive_int(
+                "DISCORD_MAX_MESSAGE_CHARS", defaults.discord_max_message_chars
+            ),
             app_host=os.getenv("APP_HOST", defaults.app_host),
             app_port=_positive_int("APP_PORT", defaults.app_port),
             log_level=os.getenv("LOG_LEVEL", defaults.log_level).upper(),
@@ -135,6 +165,43 @@ class Settings:
             )
         if self.app_port > 65535:
             raise ConfigError("APP_PORT must be at most 65535")
+        bridge_parts = urlsplit(self.discord_bridge_api_url)
+        if (
+            bridge_parts.scheme not in {"http", "https"}
+            or not bridge_parts.netloc
+        ):
+            raise ConfigError(
+                "DISCORD_BRIDGE_API_URL must be an absolute http(s) URL"
+            )
+
+    def validate_discord_bot(self) -> None:
+        required = {
+            "DISCORD_BOT_TOKEN": self.discord_bot_token,
+            "DISCORD_GUILD_ID": self.discord_guild_id,
+            "DISCORD_KAKAO_ROOM_ID": self.discord_kakao_room_id,
+            "DISCORD_BRIDGE_SECRET": self.discord_bridge_secret,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ConfigError(
+                "Discord bot settings are missing: " + ", ".join(missing)
+            )
+        id_values = (
+            ("DISCORD_GUILD_ID", self.discord_guild_id),
+            ("DISCORD_CHANNEL_ID", self.discord_channel_id),
+            ("DISCORD_KAKAO_ROOM_ID", self.discord_kakao_room_id),
+            *(
+                ("DISCORD_ALLOWED_USER_IDS", value)
+                for value in self.discord_allowed_user_ids
+            ),
+            *(
+                ("DISCORD_ALLOWED_ROLE_IDS", value)
+                for value in self.discord_allowed_role_ids
+            ),
+        )
+        for name, value in id_values:
+            if value is not None and not value.isdigit():
+                raise ConfigError(f"{name} values must contain digits only")
 
     @property
     def iris_websocket_url(self) -> str:

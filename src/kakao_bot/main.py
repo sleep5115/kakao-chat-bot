@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from .config import Settings
 from .iris import IrisApiClient, IrisWebSocketWorker
@@ -14,6 +16,11 @@ from .registration import RegistrationCodeManager
 from .registry import create_room_registry
 from .service import KakaoBot
 from .tracking import create_tracking_repository
+
+
+class DiscordBridgeMessage(BaseModel):
+    sender_name: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=4000)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -87,6 +94,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "last_error": worker.last_error if worker else "worker_not_started",
         }
         return JSONResponse(body, status_code=200 if connected else 503)
+
+    @app.post("/internal/discord/messages")
+    async def send_discord_message(
+        payload: DiscordBridgeMessage,
+        x_discord_bridge_token: str | None = Header(default=None),
+    ) -> dict[str, str]:
+        expected_token = active_settings.discord_bridge_secret
+        room_id = active_settings.discord_kakao_room_id
+        if not expected_token or not room_id:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Discord bridge is not configured",
+            )
+        if not x_discord_bridge_token or not hmac.compare_digest(
+            x_discord_bridge_token, expected_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid bridge token",
+            )
+
+        sender_name = " ".join(payload.sender_name.split())[:80]
+        message = payload.message.strip()
+        if not sender_name or not message:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sender name and message must not be blank",
+            )
+        if len(message) > active_settings.discord_max_message_chars:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Message exceeds the configured Discord-to-Kakao length limit"
+                ),
+            )
+
+        registry = app.state.room_registry
+        if not await registry.is_registered(room_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The configured KakaoTalk room is not registered",
+            )
+
+        await app.state.iris_api.reply(
+            room_id,
+            f"디코에서 {sender_name}님이 메시지를 보냈습니다 : {message}",
+        )
+        logging.getLogger(__name__).info(
+            "Forwarded a Discord command to the configured KakaoTalk room"
+        )
+        return {"status": "sent"}
 
     return app
 

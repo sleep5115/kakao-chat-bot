@@ -10,6 +10,10 @@ Kakao Bot은 Pickty와 코드·컨테이너·database/user를 분리하고 아�
 봇은 공용 HTTP 포트를 열지 않으며 Pickty Nginx 설정에도 추가하지 않습니다.
 Compose의 상태 확인은 컨테이너 내부 `/health/live`만 사용합니다.
 
+Discord `/카톡` 브리지는 `discord-kakao-bot` 별도 컨테이너로 실행됩니다. Discord
+Gateway에는 outbound WebSocket으로 연결하고, 카카오봇에는 Docker 내부 주소
+`http://kakao-bot:8000`으로 전달하므로 이 서비스에도 공용 포트가 없습니다.
+
 ## 운영 서버 현황
 
 2026-08-22 Lightsail에 다음 항목을 생성하고 실제 비밀번호 접속까지 검증했습니다.
@@ -43,6 +47,13 @@ Tailscale 인증 후 운영 Compose도 실제 기동했습니다. Compose 프로
 ```dotenv
 ROOM_DATABASE_URL=postgresql://kakao_bot_app:<secret>@pickty-postgres:5432/kakao_bot
 IRIS_BASE_URL=http://<private-iris-endpoint>:3000
+DISCORD_BOT_TOKEN=<discord-bot-token>
+DISCORD_GUILD_ID=<allowed-guild-id>
+DISCORD_CHANNEL_ID=
+DISCORD_ALLOWED_USER_IDS=
+DISCORD_ALLOWED_ROLE_IDS=
+DISCORD_KAKAO_ROOM_ID=<registered-kakao-room-id>
+DISCORD_BRIDGE_SECRET=<random-internal-secret>
 ```
 
 `IRIS_BASE_URL`은 휴대폰과 Lightsail 사이의 Tailscale 또는 인증된 reverse
@@ -111,7 +122,8 @@ docker exec kakao-bot python -c \
 2. Lightsail SSH 접속
 3. `~/kakao-chat-bot`에서 `git pull --ff-only`
 4. 봇 전용 Compose build/up
-5. container health와 Iris readiness 검증
+5. Kakao bot container health와 Iris readiness 검증
+6. Discord bot의 Gateway 연결 health 검증
 
 GitHub 저장소에는 아래 Actions secrets가 필요합니다.
 
