@@ -69,7 +69,9 @@ class KakaoBridgeClient:
 
 class DiscordKakaoClient(discord.Client):
     def __init__(self, settings: Settings) -> None:
-        super().__init__(intents=discord.Intents.none())
+        intents = discord.Intents.none()
+        intents.guilds = True
+        super().__init__(intents=intents)
         assert settings.discord_guild_id is not None
         self._settings = settings
         self._guild = discord.Object(id=int(settings.discord_guild_id))

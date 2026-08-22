@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 
 import httpx2 as httpx
 
 from kakao_bot.config import Settings
-from kakao_bot.discord_bridge import DiscordAccessPolicy, KakaoBridgeClient
+from kakao_bot.discord_bridge import (
+    DiscordAccessPolicy,
+    DiscordKakaoClient,
+    KakaoBridgeClient,
+)
 
 
 class DiscordAccessPolicyTests(unittest.TestCase):
@@ -34,6 +39,22 @@ class DiscordAccessPolicyTests(unittest.TestCase):
                 role_ids=frozenset(),
             )
         )
+
+    def test_client_uses_guilds_intent_without_privileged_intents(self) -> None:
+        settings = Settings(
+            discord_bot_token="token",
+            discord_guild_id="100",
+            discord_kakao_room_id="500",
+            discord_bridge_secret="secret",
+        )
+        client = DiscordKakaoClient(settings)
+        try:
+            self.assertTrue(client.intents.guilds)
+            self.assertFalse(client.intents.members)
+            self.assertFalse(client.intents.presences)
+            self.assertFalse(client.intents.message_content)
+        finally:
+            asyncio.run(client.close())
 
     def test_channel_and_user_or_role_filters_are_enforced(self) -> None:
         policy = DiscordAccessPolicy(
