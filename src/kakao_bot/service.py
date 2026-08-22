@@ -9,7 +9,7 @@ from typing import Any, Mapping, Protocol
 
 from .config import Settings
 from .games import GameService
-from .models import IrisEvent, IrisMember
+from .models import IrisEvent
 from .registration import RegistrationCodeManager
 from .registry import RoomRegistry
 from .tracking import MemberHistory, TrackedMessage, TrackingRepository
@@ -250,14 +250,11 @@ class KakaoBot:
         if not await self._room_registry.is_registered(event.chat_id):
             return EventOutcome.NOT_REGISTERED
 
-        members = event.members
-        if not members and event.sender_id is not None:
-            members = (IrisMember(event.sender_id, event.sender_name),)
         valid_members = [
-            member for member in members if member.user_id is not None
+            member for member in event.members if member.user_id is not None
         ]
         if not valid_members:
-            logger.warning("Ignoring member event because it has no sender_id")
+            logger.warning("Ignoring member event because it has no members feed")
             return EventOutcome.INVALID
 
         replies: list[str] = []

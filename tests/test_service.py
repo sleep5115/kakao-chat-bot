@@ -208,13 +208,25 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         await registry.register("room-1", "OM")
 
         first_join = await bot.handle_payload(
-            event("joined", origin="NEWMEM", sender_name=" 첫   닉 ", message_id="1")
+            event(
+                '{"members":[{"userId":"member-1","nickName":" 첫   닉 "}]}',
+                origin="NEWMEM",
+                message_id="1",
+            )
         )
         left = await bot.handle_payload(
-            event("left", origin="DELMEM", sender_name="현재 닉", message_id="2")
+            event(
+                '{"members":[{"userId":"member-1","nickName":"현재 닉"}]}',
+                origin="DELMEM",
+                message_id="2",
+            )
         )
         rejoined = await bot.handle_payload(
-            event("joined", origin="NEWMEM", sender_name="새 닉", message_id="3")
+            event(
+                '{"members":[{"userId":"member-1","nickName":"새 닉"}]}',
+                origin="NEWMEM",
+                message_id="3",
+            )
         )
 
         self.assertEqual(first_join, EventOutcome.MEMBER_WELCOMED)
@@ -248,6 +260,17 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome, EventOutcome.MEMBER_WELCOMED)
         self.assertIn("인사하는 프렌즈님이 입장했습니다", sender.calls[0][1])
         self.assertIn("최초 닉네임: 인사하는 프렌즈", sender.calls[0][1])
+
+    async def test_member_origin_without_members_feed_is_ignored(self) -> None:
+        bot, sender, registry = create_bot(room_types={"room-1": "OM"})
+        await registry.register("room-1", "OM")
+
+        outcome = await bot.handle_payload(
+            event("봇이 보낸 입장 안내", origin="NEWMEM")
+        )
+
+        self.assertEqual(outcome, EventOutcome.INVALID)
+        self.assertEqual(sender.calls, [])
 
     async def test_same_nickname_members_are_tracked_by_distinct_user_ids(self) -> None:
         tracking = InMemoryTrackingRepository()
