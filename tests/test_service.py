@@ -134,6 +134,11 @@ class InMemoryTrackingRepository:
         self.members[key] = history
         return history
 
+    async def find_member(
+        self, chat_id: str, sender_id: str
+    ) -> MemberHistory | None:
+        return self.members.get((chat_id, sender_id))
+
 
 def event(
     message: str = "!핑",
@@ -145,6 +150,7 @@ def event(
     origin: str | None = None,
     created_at: int = 1_777_000_000,
     message_type: int = 1,
+    server_message_id: str | None = None,
 ) -> dict[str, object]:
     row: dict[str, object] = {
         "_id": message_id,
@@ -154,6 +160,8 @@ def event(
     }
     if chat_id is not None:
         row["chat_id"] = chat_id
+    if server_message_id is not None:
+        row["id"] = server_message_id
     if origin is not None:
         row["v"] = {"origin": origin}
     return {"msg": message, "room": "room", "sender": sender_name, "json": row}
@@ -326,12 +334,50 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("내용: 삭제될 원문", sender.calls[0][1])
         self.assertIn(("room-1", "100"), tracking.deleted)
 
+    async def test_deletion_uses_server_log_id_and_member_nickname(self) -> None:
+        tracking = InMemoryTrackingRepository()
+        bot, sender, registry = create_bot(
+            room_types={"room-1": "OM"}, tracking=tracking
+        )
+        await registry.register("room-1", "OM")
+        await tracking.record_join(
+            "room-1",
+            "sender-1",
+            "현재 닉네임",
+            datetime(2026, 8, 22, 12, 0, tzinfo=UTC),
+        )
+
+        await bot.handle_payload(
+            event(
+                "삭제테스트123",
+                origin="MSG",
+                message_id="local-100",
+                server_message_id="server-200",
+                sender_name="",
+            )
+        )
+        deleted = await bot.handle_payload(
+            event(
+                '{"feedType":14,"hidden":true,"logId":"server-200"}',
+                origin="SYNCDLMSG",
+                message_id="local-101",
+                sender_name="",
+            )
+        )
+
+        self.assertEqual(deleted, EventOutcome.MESSAGE_DELETION_REPORTED)
+        self.assertIn("삭제한 사람: 현재 닉네임", sender.calls[0][1])
+        self.assertIn("원 작성자: 현재 닉네임", sender.calls[0][1])
+        self.assertIn("내용: 삭제테스트123", sender.calls[0][1])
+        self.assertIn(("room-1", "server-200"), tracking.deleted)
+
     async def test_falls_back_to_iris_for_message_written_before_tracking(self) -> None:
         bot, sender, registry = create_bot(
             room_types={"room-1": "OM"},
             query_rows=[
                 {
                     "_id": "90",
+                    "id": "server-90",
                     "chat_id": "room-1",
                     "user_id": "author-1",
                     "type": 1,
@@ -345,7 +391,7 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
 
         outcome = await bot.handle_payload(
             event(
-                '{"logId":"90"}',
+                '{"logId":"server-90"}',
                 origin="SYNCDLMSG",
                 message_id="91",
                 sender_id="author-1",

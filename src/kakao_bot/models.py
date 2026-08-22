@@ -102,7 +102,7 @@ class IrisEvent:
             sender_name=_string(payload.get("sender")),
             chat_id=_string(row.get("chat_id")),
             sender_id=_string(row.get("user_id")),
-            message_id=_string(row.get("_id") or row.get("id")),
+            message_id=_string(row.get("id") or row.get("_id")),
             origin=_string(version.get("origin")),
             message_type=_string(row.get("type")),
             created_at=_datetime(row.get("created_at")),

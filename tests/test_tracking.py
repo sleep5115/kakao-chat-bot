@@ -97,6 +97,10 @@ class SQLiteTrackingRepositoryTests(unittest.IsolatedAsyncioTestCase):
             (first_at, first_at + timedelta(hours=2)),
         )
         self.assertTrue(rejoined.is_present)
+        found = await self.tracking.find_member("room-1", "user-1")
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found.current_nickname, "새 닉")
 
     async def test_duplicate_join_event_does_not_duplicate_history(self) -> None:
         joined_at = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)

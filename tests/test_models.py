@@ -45,6 +45,17 @@ class IrisEventTests(unittest.TestCase):
         self.assertEqual(event.message_id, "101")
         self.assertEqual(event.origin, "DELMEM")
 
+    def test_prefers_server_id_used_by_deletion_log_id(self) -> None:
+        event = IrisEvent.from_payload(
+            {
+                "msg": "message",
+                "json": {"_id": 101, "id": 202, "chat_id": 200},
+            }
+        )
+
+        assert event is not None
+        self.assertEqual(event.message_id, "202")
+
     def test_parses_members_from_join_feed_message(self) -> None:
         event = IrisEvent.from_payload(
             {

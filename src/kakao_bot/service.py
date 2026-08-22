@@ -322,7 +322,9 @@ class KakaoBot:
         original = await self._tracking_repository.find_message(
             event.chat_id, deleted_message_id
         )
-        actor = self._display_name(event.sender_name) or "알 수 없는 사용자"
+        actor = await self._resolve_member_name(
+            event.chat_id, event.sender_id, event.sender_name
+        )
         if original is None:
             original = await self._find_original_in_iris(
                 event, deleted_message_id, actor
@@ -333,6 +335,7 @@ class KakaoBot:
                 "원문은 추적 시작 전 또는 보존 기간이 지난 메시지라 확인할 수 없습니다."
             )
         else:
+            await self._tracking_repository.save_message(original)
             await self._tracking_repository.mark_deleted(
                 event.chat_id,
                 deleted_message_id,
@@ -340,7 +343,9 @@ class KakaoBot:
                 event.sender_id,
                 actor,
             )
-            author = original.sender_name or "알 수 없는 사용자"
+            author = await self._resolve_member_name(
+                event.chat_id, original.sender_id, original.sender_name
+            )
             content_limit = min(self._settings.message_max_chars, 3400)
             content = original.content[:content_limit]
             reply = (
@@ -365,9 +370,9 @@ class KakaoBot:
         assert deletion_event.chat_id is not None
         rows = await self._room_type_resolver.query(
             """
-            SELECT _id, chat_id, user_id, type, message, created_at, v, enc
+            SELECT _id, id, chat_id, user_id, type, message, created_at, v
             FROM chat_logs
-            WHERE _id = ? AND chat_id = ?
+            WHERE id = ? AND chat_id = ?
             LIMIT 1
             """,
             [deleted_message_id, deletion_event.chat_id],
@@ -406,6 +411,25 @@ class KakaoBot:
             message_type=source_event.message_type,
             sent_at=source_event.created_at,
         )
+
+    async def _resolve_member_name(
+        self,
+        chat_id: str,
+        sender_id: str | None,
+        explicit_name: str | None,
+    ) -> str:
+        name = self._display_name(explicit_name)
+        if name is not None:
+            return name
+        if sender_id is not None:
+            member = await self._tracking_repository.find_member(chat_id, sender_id)
+            if member is not None:
+                known_name = self._display_name(
+                    member.current_nickname or member.first_nickname
+                )
+                if known_name is not None:
+                    return known_name
+        return "알 수 없는 사용자"
 
     @staticmethod
     def _deleted_message_id(message: str) -> str | None:

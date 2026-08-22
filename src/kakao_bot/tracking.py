@@ -70,6 +70,10 @@ class TrackingRepository(Protocol):
         left_at: datetime,
     ) -> MemberHistory: ...
 
+    async def find_member(
+        self, chat_id: str, sender_id: str
+    ) -> MemberHistory | None: ...
+
 
 def _as_datetime(value: Any) -> datetime | None:
     if value is None:
@@ -168,6 +172,11 @@ class SQLiteTrackingRepository:
         return await asyncio.to_thread(
             self._record_leave_sync, chat_id, sender_id, nickname, left_at
         )
+
+    async def find_member(
+        self, chat_id: str, sender_id: str
+    ) -> MemberHistory | None:
+        return await asyncio.to_thread(self._find_member_sync, chat_id, sender_id)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database_path, timeout=5)
@@ -397,6 +406,16 @@ class SQLiteTrackingRepository:
         assert row is not None
         return _member_from_row(row)
 
+    def _find_member_sync(
+        self, chat_id: str, sender_id: str
+    ) -> MemberHistory | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM room_members WHERE chat_id = ? AND sender_id = ?",
+                (chat_id, sender_id),
+            ).fetchone()
+        return _member_from_row(row) if row else None
+
 
 class PostgresTrackingRepository:
     def __init__(
@@ -460,6 +479,11 @@ class PostgresTrackingRepository:
         return await asyncio.to_thread(
             self._record_leave_sync, chat_id, sender_id, nickname, left_at
         )
+
+    async def find_member(
+        self, chat_id: str, sender_id: str
+    ) -> MemberHistory | None:
+        return await asyncio.to_thread(self._find_member_sync, chat_id, sender_id)
 
     def _connect(self) -> Any:
         if self._connection_factory is not None:
@@ -706,6 +730,19 @@ class PostgresTrackingRepository:
             ).fetchone()
         assert row is not None
         return _member_from_row(row)
+
+    def _find_member_sync(
+        self, chat_id: str, sender_id: str
+    ) -> MemberHistory | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM room_members
+                WHERE chat_id = %s AND sender_id = %s
+                """,
+                (chat_id, sender_id),
+            ).fetchone()
+        return _member_from_row(row) if row else None
 
 
 def create_tracking_repository(settings: Settings) -> TrackingRepository:
