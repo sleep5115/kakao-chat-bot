@@ -242,10 +242,15 @@ Lightsail 같은 외부 서버에서는 휴대폰의 사설 IP로 직접 접근�
 - 이미지 내부 Psycopg `3.3.4`로 운영 PostgreSQL 활성 등록 1건 조회 성공
 - Galaxy J6와 Lightsail을 같은 Tailscale tailnet에 연결
 - Android Tailscale Always-on VPN 및 배터리 절전 예외 설정(lockdown은 OFF)
+- `galaxy-j6`, `kakao-bot-lightsail` 모두 Tailscale key expiry 비활성화 검증
 - Lightsail container에서 Android Iris `/config` HTTP 200 확인
 - 독립 Compose 프로젝트 `kakao-chat-bot`으로 운영 컨테이너 기동
 - 운영 상태 `running`, `healthy`, restart 0, `/health/ready` HTTP 200 확인
 - Lightsail 운영 봇을 통한 실기기 `!핑 → 퐁`, Iris `/reply` HTTP 200 확인
+- GitHub Actions secrets 3종 등록 및 `main` push 기반 자동배포 구현
+- GitHub Actions Python 테스트, SSH 배포, container health/readiness 검증 성공
+- Actions를 Node 24 기반 `checkout@v6`, `setup-python@v6`로 갱신하고 무경고 실행 확인
+- 서버 배포 경로를 Git clone으로 전환하고 기존 수동 배포본은 백업으로 보존
 
 집 PC의 ADB 경로:
 
@@ -266,7 +271,8 @@ C:\Users\Admin\Android\platform-tools\adb.exe
 - 운영 PostgreSQL과 등록 데이터 이전은 완료됐으며 Pickty DB/schema는 변경하지 않음
 - Tailscale 연결, 비공개 Iris endpoint, 서버 runtime.env와 운영 봇 기동까지 완료
 - 현재 휴대폰과 Lightsail은 DERP 릴레이 경로를 사용하지만 명령 응답에는 문제 없음
-- 다음 작업은 운영 배포를 Git 기반으로 자동화하고 Tailscale key expiry 정책을 점검하는 것
+- Git 기반 자동배포와 Tailscale key expiry 비활성화까지 완료
+- 다음 작업은 채팅 저장 고지·최소 수집·보존 기간을 확정하고 기능 개발을 시작하는 것
 
 Iris 공식 파일 검증값:
 
@@ -341,9 +347,10 @@ FastAPI에서 Iris WebSocket에 연결해 이벤트를 받고, `!핑` 명령만 
 4. ~~SQLite 등록 방 정보를 PostgreSQL로 이전~~ — 완료
 5. ~~휴대폰과 Lightsail의 Tailscale 로그인 및 비공개 Iris 연결 검증~~ — 완료
 6. ~~Docker 이미지 검증과 Lightsail 독립 서비스 기동~~ — 완료
-7. 채팅 저장 고지, 최소 수집 항목과 보존 기간 확정
-8. 입퇴장 관리와 게임 API
-9. AI API 연동
+7. ~~GitHub Actions 자동배포와 Tailscale key expiry 정책 적용~~ — 완료
+8. 채팅 저장 고지, 최소 수집 항목과 보존 기간 확정
+9. 입퇴장 관리와 게임 API
+10. AI API 연동
 
 ## 안전 규칙
 

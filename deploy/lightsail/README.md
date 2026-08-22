@@ -62,7 +62,11 @@ VPN lockdown은 꺼서 Tailscale 장애 시 일반 인터넷까지 차단하지 
 두 장치 간 경로는 직접 연결이 아닌 Tailscale DERP 릴레이이며 실측 지연은
 약 106–182ms, Iris HTTP 응답은 약 0.15초였습니다.
 
-로그인 후 Lightsail에서 휴대폰 Tailscale IPv4와 Iris 응답을 확인합니다.
+`galaxy-j6`와 `kakao-bot-lightsail`은 전용 운영 장치이므로 관리자 콘솔에서
+`Disable key expiry`를 적용했고, 두 장치 모두 `KeyExpiry=None`을 확인했습니다.
+장치를 분실하거나 교체하면 Machines에서 즉시 제거합니다.
+
+연결 점검 시 Lightsail에서 휴대폰 Tailscale IPv4와 Iris 응답을 확인합니다.
 
 ```bash
 tailscale status
@@ -117,6 +121,10 @@ GitHub 저장소에는 아래 Actions secrets가 필요합니다.
 
 운영 DB URL과 Iris URL은 GitHub에 복제하지 않고 서버의 mode `600` 환경파일을
 계속 사용합니다.
+
+첫 운영 자동배포와 Node 24 기반 최종 무경고 재실행을 통과했습니다. 서버의
+`~/kakao-chat-bot`은 Git clone이며, 전환 전 수동 배포본은
+`~/kakao-chat-bot.manual-backup-20260822`에 보존돼 있습니다.
 
 ## 기존 SQLite 등록 이전
 
