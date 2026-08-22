@@ -1,0 +1,67 @@
+name: Test and deploy Kakao Bot
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy.yml"
+      - "deploy/lightsail/**"
+      - "src/**"
+      - "tests/**"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+concurrency:
+  group: kakao-bot-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Run tests
+        run: python -m pytest
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USERNAME }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "$HOME/kakao-chat-bot"
+            test -f "$HOME/.config/kakao-bot/runtime.env"
+            test "$(stat -c '%a' "$HOME/.config/kakao-bot/runtime.env")" = "600"
+            docker network inspect pickty-infra_default >/dev/null
+            git pull --ff-only origin main
+            docker compose -f deploy/lightsail/docker-compose.yml up -d --build
+            for attempt in $(seq 1 30); do
+              health="$(docker inspect kakao-bot --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')"
+              if [ "$health" = "healthy" ]; then
+                break
+              fi
+              sleep 2
+            done
+            test "$(docker inspect kakao-bot --format '{{.State.Health.Status}}')" = "healthy"
+            docker exec kakao-bot python -c "import urllib.request; response=urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5); assert response.status == 200"
+

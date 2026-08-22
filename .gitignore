@@ -1,0 +1,14 @@
+.env
+.adb-home/
+.android/
+.idea/
+.venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+data/
+htmlcov/
+*.log
