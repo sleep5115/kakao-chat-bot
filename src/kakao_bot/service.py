@@ -31,7 +31,6 @@ class RoomTypeResolver(Protocol):
 
 class EventOutcome(StrEnum):
     REPLIED = "replied"
-    BOT_INFO_REPLIED = "bot_info_replied"
     REGISTRATION_CODE_ISSUED = "registration_code_issued"
     UNREGISTRATION_CODE_ISSUED = "unregistration_code_issued"
     ROOM_REGISTERED = "room_registered"
@@ -79,12 +78,6 @@ class KakaoBot:
         self._registration_codes = registration_codes
         self._unregistration_codes = unregistration_codes
         self._games = game_service or GameService()
-        self._privacy_notice = (
-            "삭제 메시지 추적과 입퇴장 이력 제공을 위해 메시지 내용·메시지 ID·"
-            f"발신자 ID/닉네임·시각을 {settings.message_retention_days}일간 저장합니다. "
-            "최초 입장·최초 닉네임·재입장 횟수는 방 등록 기간 동안 저장하며, "
-            "삭제된 메시지는 원문과 작성자 정보가 방에 다시 표시될 수 있습니다."
-        )
         self._seen_order: deque[str] = deque()
         self._seen_ids: set[str] = set()
 
@@ -113,10 +106,7 @@ class KakaoBot:
         if message == "!봇해제" or message.startswith("!봇해제 "):
             return await self._unregister_room(event, message)
         game_reply = self._games.handle(message)
-        is_command = (
-            message in {self._settings.bot_command, "!봇정보"}
-            or game_reply is not None
-        )
+        is_command = message == self._settings.bot_command or game_reply is not None
 
         if (
             self._settings.allowed_room_ids
@@ -142,11 +132,6 @@ class KakaoBot:
             room_type = await self._room_type_resolver.get_room_type(event.chat_id)
             if room_type != "MemoChat":
                 return EventOutcome.NOT_REGISTERED
-
-        if message == "!봇정보":
-            await self._reply_sender.reply(event.chat_id, self._privacy_notice)
-            self._remember_event(event)
-            return EventOutcome.BOT_INFO_REPLIED
 
         if game_reply is not None:
             await self._reply_sender.reply(event.chat_id, game_reply)
@@ -222,8 +207,7 @@ class KakaoBot:
             return EventOutcome.INVALID_REGISTRATION_CODE
 
         await self._room_registry.register(event.chat_id, room_type)
-        await self._reply_sender.reply(event.chat_id, "봇 등록이 완료되었습니다.")
-        await self._reply_sender.reply(event.chat_id, self._privacy_notice)
+        await self._reply_sender.reply(event.chat_id, "등록이 완료되었습니다.")
         self._remember_event(event)
         logger.info("Registered a chat room for bot commands")
         return EventOutcome.ROOM_REGISTERED
