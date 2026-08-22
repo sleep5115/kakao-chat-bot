@@ -349,7 +349,7 @@ FastAPI에서 Iris WebSocket에 연결해 이벤트를 받고, `!핑` 명령만 
 6. ~~Docker 이미지 검증과 Lightsail 독립 서비스 기동~~ — 완료
 7. ~~GitHub Actions 자동배포와 Tailscale key expiry 정책 적용~~ — 완료
 8. ~~채팅 저장 고지, 최소 수집 항목과 보존 기간 확정~~ — 완료
-9. 입퇴장 관리와 게임 API
+9. ~~입퇴장 관리와 기본 게임 명령~~ — 완료
 10. AI API 연동
 
 ## 안전 규칙

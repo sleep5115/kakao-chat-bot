@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Any, Mapping, Protocol
 
 from .config import Settings
+from .games import GameService
 from .models import IrisEvent
 from .registration import RegistrationCodeManager
 from .registry import RoomRegistry
@@ -27,6 +28,9 @@ class EventOutcome(StrEnum):
     REGISTRATION_CODE_ISSUED = "registration_code_issued"
     ROOM_REGISTERED = "room_registered"
     ROOM_UNREGISTERED = "room_unregistered"
+    MEMBER_WELCOMED = "member_welcomed"
+    MEMBER_DEPARTURE_ANNOUNCED = "member_departure_announced"
+    GAME_REPLIED = "game_replied"
     ALREADY_REGISTERED = "already_registered"
     NOT_REGISTERED = "not_registered"
     INVALID_REGISTRATION_CODE = "invalid_registration_code"
@@ -55,12 +59,14 @@ class KakaoBot:
         room_type_resolver: RoomTypeResolver,
         room_registry: RoomRegistry,
         registration_codes: RegistrationCodeManager,
+        game_service: GameService | None = None,
     ) -> None:
         self._settings = settings
         self._reply_sender = reply_sender
         self._room_type_resolver = room_type_resolver
         self._room_registry = room_registry
         self._registration_codes = registration_codes
+        self._games = game_service or GameService()
         self._seen_order: deque[str] = deque()
         self._seen_ids: set[str] = set()
 
@@ -74,12 +80,19 @@ class KakaoBot:
             logger.warning("Ignoring command because the Iris event has no chat_id")
             return EventOutcome.MISSING_CHAT_ID
 
+        if event.origin in {"NEWMEM", "DELMEM"}:
+            return await self._handle_member_event(event)
+
         message = event.message.strip()
         if message == "!등록코드":
             return await self._issue_registration_code(event)
         if message == "!봇등록" or message.startswith("!봇등록 "):
             return await self._register_room(event, message)
-        if message not in {self._settings.bot_command, "!봇정보", "!봇해제"}:
+        game_reply = self._games.handle(message)
+        if (
+            message not in {self._settings.bot_command, "!봇정보", "!봇해제"}
+            and game_reply is None
+        ):
             return EventOutcome.NOT_COMMAND
 
         if (
@@ -115,6 +128,12 @@ class KakaoBot:
             self._remember_event(event)
             logger.info("Unregistered a chat room and deleted its registration data")
             return EventOutcome.ROOM_UNREGISTERED
+
+        if game_reply is not None:
+            await self._reply_sender.reply(event.chat_id, game_reply)
+            self._remember_event(event)
+            logger.info("Replied to a stateless game command")
+            return EventOutcome.GAME_REPLIED
 
         await self._reply_sender.reply(event.chat_id, self._settings.bot_reply)
         self._remember_event(event)
@@ -172,6 +191,37 @@ class KakaoBot:
         self._remember_event(event)
         logger.info("Registered a chat room for bot commands")
         return EventOutcome.ROOM_REGISTERED
+
+    async def _handle_member_event(self, event: IrisEvent) -> EventOutcome:
+        assert event.chat_id is not None
+        if (
+            self._settings.allowed_room_ids
+            and event.chat_id not in self._settings.allowed_room_ids
+        ):
+            return EventOutcome.ROOM_NOT_ALLOWED
+        if not await self._room_registry.is_registered(event.chat_id):
+            return EventOutcome.NOT_REGISTERED
+
+        member_name = " ".join((event.sender_name or "").split())[:40]
+        if event.origin == "NEWMEM":
+            message = (
+                f"{member_name}님, 어서 오세요! 👋"
+                if member_name
+                else "새 멤버가 입장했습니다. 어서 오세요! 👋"
+            )
+            outcome = EventOutcome.MEMBER_WELCOMED
+        else:
+            message = (
+                f"{member_name}님이 퇴장했습니다."
+                if member_name
+                else "멤버가 퇴장했습니다."
+            )
+            outcome = EventOutcome.MEMBER_DEPARTURE_ANNOUNCED
+
+        await self._reply_sender.reply(event.chat_id, message)
+        self._remember_event(event)
+        logger.info("Replied to a member lifecycle event")
+        return outcome
 
     def _remember_event(self, event: IrisEvent) -> None:
         if event.message_id:

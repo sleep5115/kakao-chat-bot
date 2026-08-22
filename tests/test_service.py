@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from kakao_bot.config import Settings
+from kakao_bot.games import GameService
 from kakao_bot.registration import RegistrationCodeManager
 from kakao_bot.registry import RegisteredRoom
 from kakao_bot.service import EventOutcome, KakaoBot
@@ -50,11 +51,15 @@ def event(
     message_id: str = "1",
     chat_id: str | None = "room-1",
     sender_id: str = "sender-1",
+    sender_name: str = "sender",
+    origin: str | None = None,
 ) -> dict[str, object]:
     row: dict[str, object] = {"_id": message_id, "user_id": sender_id}
     if chat_id is not None:
         row["chat_id"] = chat_id
-    return {"msg": message, "room": "room", "sender": "sender", "json": row}
+    if origin is not None:
+        row["v"] = {"origin": origin}
+    return {"msg": message, "room": "room", "sender": sender_name, "json": row}
 
 
 def create_bot(
@@ -66,7 +71,14 @@ def create_bot(
     registry = InMemoryRoomRegistry()
     resolver = FakeRoomTypeResolver(room_types)
     codes = RegistrationCodeManager(code_factory=lambda: "123456")
-    bot = KakaoBot(settings or Settings(), sender, resolver, registry, codes)
+    bot = KakaoBot(
+        settings or Settings(),
+        sender,
+        resolver,
+        registry,
+        codes,
+        GameService(number_picker=lambda upper_bound: 0),
+    )
     return bot, sender, registry
 
 
@@ -87,6 +99,44 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(outcome, EventOutcome.REPLIED)
         self.assertEqual(sender.calls, [("room-1", "퐁")])
+
+    async def test_registered_room_receives_join_and_leave_notices(self) -> None:
+        bot, sender, registry = create_bot(room_types={"room-1": "OM"})
+        await registry.register("room-1", "OM")
+
+        joined = await bot.handle_payload(
+            event("joined", origin="NEWMEM", sender_name=" 새   멤버 ", message_id="1")
+        )
+        left = await bot.handle_payload(
+            event("left", origin="DELMEM", sender_name="떠난 멤버", message_id="2")
+        )
+
+        self.assertEqual(joined, EventOutcome.MEMBER_WELCOMED)
+        self.assertEqual(left, EventOutcome.MEMBER_DEPARTURE_ANNOUNCED)
+        self.assertEqual(
+            sender.calls,
+            [
+                ("room-1", "새 멤버님, 어서 오세요! 👋"),
+                ("room-1", "떠난 멤버님이 퇴장했습니다."),
+            ],
+        )
+
+    async def test_unregistered_room_ignores_member_events(self) -> None:
+        bot, sender, _ = create_bot(room_types={"room-1": "OM"})
+
+        outcome = await bot.handle_payload(event("joined", origin="NEWMEM"))
+
+        self.assertEqual(outcome, EventOutcome.NOT_REGISTERED)
+        self.assertEqual(sender.calls, [])
+
+    async def test_registered_room_can_play_stateless_games(self) -> None:
+        bot, sender, registry = create_bot(room_types={"room-1": "OM"})
+        await registry.register("room-1", "OM")
+
+        outcome = await bot.handle_payload(event("!주사위", message_id="game-1"))
+
+        self.assertEqual(outcome, EventOutcome.GAME_REPLIED)
+        self.assertEqual(sender.calls, [("room-1", "🎲 1 (1~6)")])
 
     async def test_memo_chat_can_use_ping_without_registration(self) -> None:
         bot, sender, _ = create_bot(room_types={"memo": "MemoChat"})
