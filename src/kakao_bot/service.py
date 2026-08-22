@@ -23,8 +23,10 @@ class RoomTypeResolver(Protocol):
 
 class EventOutcome(StrEnum):
     REPLIED = "replied"
+    BOT_INFO_REPLIED = "bot_info_replied"
     REGISTRATION_CODE_ISSUED = "registration_code_issued"
     ROOM_REGISTERED = "room_registered"
+    ROOM_UNREGISTERED = "room_unregistered"
     ALREADY_REGISTERED = "already_registered"
     NOT_REGISTERED = "not_registered"
     INVALID_REGISTRATION_CODE = "invalid_registration_code"
@@ -40,6 +42,11 @@ class EventOutcome(StrEnum):
 
 class KakaoBot:
     REGISTERABLE_ROOM_TYPES = frozenset({"DirectChat", "MultiChat", "OD", "OM"})
+    PRIVACY_NOTICE = (
+        "대화 내용, 방 이름, 닉네임, 사용자 ID는 저장하지 않습니다. "
+        "방 ID·방 종류·등록 시각만 등록 해제 전까지 보관하며, "
+        "!봇해제를 입력하면 즉시 삭제됩니다."
+    )
 
     def __init__(
         self,
@@ -72,7 +79,7 @@ class KakaoBot:
             return await self._issue_registration_code(event)
         if message == "!봇등록" or message.startswith("!봇등록 "):
             return await self._register_room(event, message)
-        if message != self._settings.bot_command:
+        if message not in {self._settings.bot_command, "!봇정보", "!봇해제"}:
             return EventOutcome.NOT_COMMAND
 
         if (
@@ -91,6 +98,23 @@ class KakaoBot:
             room_type = await self._room_type_resolver.get_room_type(event.chat_id)
             if room_type != "MemoChat":
                 return EventOutcome.NOT_REGISTERED
+
+        if message == "!봇정보":
+            await self._reply_sender.reply(event.chat_id, self.PRIVACY_NOTICE)
+            self._remember_event(event)
+            return EventOutcome.BOT_INFO_REPLIED
+
+        if message == "!봇해제":
+            if not registered:
+                return EventOutcome.ADMIN_ONLY
+            await self._room_registry.unregister(event.chat_id)
+            await self._reply_sender.reply(
+                event.chat_id,
+                "봇 등록과 저장된 방 정보가 삭제되었습니다.",
+            )
+            self._remember_event(event)
+            logger.info("Unregistered a chat room and deleted its registration data")
+            return EventOutcome.ROOM_UNREGISTERED
 
         await self._reply_sender.reply(event.chat_id, self._settings.bot_reply)
         self._remember_event(event)
@@ -144,6 +168,7 @@ class KakaoBot:
 
         await self._room_registry.register(event.chat_id, room_type)
         await self._reply_sender.reply(event.chat_id, "봇 등록이 완료되었습니다.")
+        await self._reply_sender.reply(event.chat_id, self.PRIVACY_NOTICE)
         self._remember_event(event)
         logger.info("Registered a chat room for bot commands")
         return EventOutcome.ROOM_REGISTERED

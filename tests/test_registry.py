@@ -15,7 +15,7 @@ from kakao_bot.registry import (
 
 
 class SQLiteRoomRegistryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_registration_persists_and_can_be_disabled(self) -> None:
+    async def test_registration_persists_and_can_be_deleted(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "registry.db"
             first = SQLiteRoomRegistry(str(path))
@@ -29,8 +29,9 @@ class SQLiteRoomRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await second.is_registered("room-1"))
             self.assertEqual(len(rooms), 1)
             self.assertEqual(rooms[0].room_type, "OM")
-            self.assertTrue(await second.disable("room-1"))
+            self.assertTrue(await second.unregister("room-1"))
             self.assertFalse(await second.is_registered("room-1"))
+            self.assertFalse(await second.unregister("room-1"))
 
 
 class PostgresRoomRegistryTests(unittest.IsolatedAsyncioTestCase):
@@ -52,7 +53,7 @@ class PostgresRoomRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("TIMESTAMPTZ", statement)
         self.connect.assert_called_once()
 
-    async def test_registration_lookup_and_disable_use_parameters(self) -> None:
+    async def test_registration_lookup_and_unregister_use_parameters(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = {"?column?": 1}
         cursor.rowcount = 1
@@ -60,7 +61,7 @@ class PostgresRoomRegistryTests(unittest.IsolatedAsyncioTestCase):
 
         await self.registry.register("room-1", "OM")
         self.assertTrue(await self.registry.is_registered("room-1"))
-        self.assertTrue(await self.registry.disable("room-1"))
+        self.assertTrue(await self.registry.unregister("room-1"))
 
         calls = self.connection.execute.call_args_list
         self.assertEqual(calls[0].args[1][:2], ("room-1", "OM"))

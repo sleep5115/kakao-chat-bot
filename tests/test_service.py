@@ -37,7 +37,7 @@ class InMemoryRoomRegistry:
     async def register(self, chat_id: str, room_type: str) -> None:
         self.rooms[chat_id] = RegisteredRoom(chat_id, room_type, "now")
 
-    async def disable(self, chat_id: str) -> bool:
+    async def unregister(self, chat_id: str) -> bool:
         return self.rooms.pop(chat_id, None) is not None
 
     async def list_registered(self) -> list[RegisteredRoom]:
@@ -135,7 +135,40 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await registry.is_registered("target"))
         self.assertEqual(reused, EventOutcome.INVALID_REGISTRATION_CODE)
         self.assertFalse(await registry.is_registered("other"))
-        self.assertEqual(sender.calls[-1], ("target", "봇 등록이 완료되었습니다."))
+        self.assertEqual(sender.calls[-2], ("target", "봇 등록이 완료되었습니다."))
+        self.assertEqual(sender.calls[-1], ("target", KakaoBot.PRIVACY_NOTICE))
+
+    async def test_registered_room_can_read_bot_info(self) -> None:
+        bot, sender, registry = create_bot(room_types={"room-1": "OM"})
+        await registry.register("room-1", "OM")
+
+        outcome = await bot.handle_payload(event("!봇정보"))
+
+        self.assertEqual(outcome, EventOutcome.BOT_INFO_REPLIED)
+        self.assertEqual(sender.calls, [("room-1", KakaoBot.PRIVACY_NOTICE)])
+
+    async def test_unregistered_room_cannot_make_bot_reply_with_info_command(self) -> None:
+        bot, sender, _ = create_bot(room_types={"room-1": "OM"})
+
+        outcome = await bot.handle_payload(event("!봇정보"))
+
+        self.assertEqual(outcome, EventOutcome.NOT_REGISTERED)
+        self.assertEqual(sender.calls, [])
+
+    async def test_unregister_deletes_room_data_and_blocks_future_commands(self) -> None:
+        bot, sender, registry = create_bot(room_types={"room-1": "OM"})
+        await registry.register("room-1", "OM")
+
+        outcome = await bot.handle_payload(event("!봇해제", message_id="1"))
+        ping_outcome = await bot.handle_payload(event("!핑", message_id="2"))
+
+        self.assertEqual(outcome, EventOutcome.ROOM_UNREGISTERED)
+        self.assertFalse(await registry.is_registered("room-1"))
+        self.assertEqual(ping_outcome, EventOutcome.NOT_REGISTERED)
+        self.assertEqual(
+            sender.calls,
+            [("room-1", "봇 등록과 저장된 방 정보가 삭제되었습니다.")],
+        )
 
     async def test_invalid_code_does_not_reply_or_register(self) -> None:
         bot, sender, registry = create_bot(

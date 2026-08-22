@@ -20,7 +20,7 @@ class InMemoryRegistry:
     async def register(self, chat_id: str, room_type: str) -> None:
         self.rooms[chat_id] = RegisteredRoom(chat_id, room_type, "migrated")
 
-    async def disable(self, chat_id: str) -> bool:
+    async def unregister(self, chat_id: str) -> bool:
         return self.rooms.pop(chat_id, None) is not None
 
     async def list_registered(self) -> list[RegisteredRoom]:
@@ -47,4 +47,3 @@ class RegistryMigrationTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

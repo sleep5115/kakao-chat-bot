@@ -25,7 +25,7 @@ class RoomRegistry(Protocol):
 
     async def register(self, chat_id: str, room_type: str) -> None: ...
 
-    async def disable(self, chat_id: str) -> bool: ...
+    async def unregister(self, chat_id: str) -> bool: ...
 
     async def list_registered(self) -> list[RegisteredRoom]: ...
 
@@ -45,8 +45,8 @@ class SQLiteRoomRegistry:
     async def register(self, chat_id: str, room_type: str) -> None:
         await asyncio.to_thread(self._register_sync, chat_id, room_type)
 
-    async def disable(self, chat_id: str) -> bool:
-        return await asyncio.to_thread(self._disable_sync, chat_id)
+    async def unregister(self, chat_id: str) -> bool:
+        return await asyncio.to_thread(self._unregister_sync, chat_id)
 
     async def list_registered(self) -> list[RegisteredRoom]:
         return await asyncio.to_thread(self._list_registered_sync)
@@ -96,11 +96,11 @@ class SQLiteRoomRegistry:
                     (chat_id, room_type, registered_at),
                 )
 
-    def _disable_sync(self, chat_id: str) -> bool:
+    def _unregister_sync(self, chat_id: str) -> bool:
         with closing(self._connect()) as connection:
             with connection:
                 cursor = connection.execute(
-                    "UPDATE registered_rooms SET enabled = 0 WHERE chat_id = ? AND enabled = 1",
+                    "DELETE FROM registered_rooms WHERE chat_id = ?",
                     (chat_id,),
                 )
                 changed = cursor.rowcount > 0
@@ -148,8 +148,8 @@ class PostgresRoomRegistry:
     async def register(self, chat_id: str, room_type: str) -> None:
         await asyncio.to_thread(self._register_sync, chat_id, room_type)
 
-    async def disable(self, chat_id: str) -> bool:
-        return await asyncio.to_thread(self._disable_sync, chat_id)
+    async def unregister(self, chat_id: str) -> bool:
+        return await asyncio.to_thread(self._unregister_sync, chat_id)
 
     async def list_registered(self) -> list[RegisteredRoom]:
         return await asyncio.to_thread(self._list_registered_sync)
@@ -210,13 +210,12 @@ class PostgresRoomRegistry:
                 (chat_id, room_type, registered_at),
             )
 
-    def _disable_sync(self, chat_id: str) -> bool:
+    def _unregister_sync(self, chat_id: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                UPDATE registered_rooms
-                SET enabled = FALSE
-                WHERE chat_id = %s AND enabled = TRUE
+                DELETE FROM registered_rooms
+                WHERE chat_id = %s
                 """,
                 (chat_id,),
             )
