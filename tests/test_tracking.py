@@ -113,6 +113,25 @@ class SQLiteTrackingRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(duplicate.join_count, 1)
         self.assertEqual(duplicate.joined_at_history, (joined_at,))
 
+    async def test_leave_before_first_observed_join_preserves_unknown_first_date(self) -> None:
+        left_at = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+        rejoined_at = left_at + timedelta(hours=1)
+
+        left = await self.tracking.record_leave(
+            "room-1", "preexisting", "기존 멤버", left_at
+        )
+        rejoined = await self.tracking.record_join(
+            "room-1", "preexisting", "새 닉네임", rejoined_at
+        )
+
+        self.assertEqual(left.join_count, 1)
+        self.assertIsNone(left.first_joined_at)
+        self.assertEqual(left.first_nickname, "기존 멤버")
+        self.assertEqual(rejoined.join_count, 2)
+        self.assertIsNone(rejoined.first_joined_at)
+        self.assertEqual(rejoined.first_nickname, "기존 멤버")
+        self.assertEqual(rejoined.joined_at_history, (rejoined_at,))
+
     async def test_room_deletion_cascades_tracking_records(self) -> None:
         await self.tracking.save_message(
             TrackedMessage(

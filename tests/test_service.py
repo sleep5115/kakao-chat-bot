@@ -123,9 +123,9 @@ class InMemoryTrackingRepository:
             chat_id=chat_id,
             sender_id=sender_id,
             first_joined_at=previous.first_joined_at if previous else None,
-            first_nickname=previous.first_nickname if previous else None,
+            first_nickname=previous.first_nickname if previous else nickname,
             current_nickname=nickname,
-            join_count=previous.join_count if previous else 0,
+            join_count=previous.join_count if previous else 1,
             last_joined_at=previous.last_joined_at if previous else None,
             last_left_at=left_at,
             is_present=False,
@@ -279,6 +279,37 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(outcome, EventOutcome.INVALID)
         self.assertEqual(sender.calls, [])
+
+    async def test_leave_before_first_observed_join_is_treated_as_preexisting(self) -> None:
+        bot, sender, registry = create_bot(room_types={"room-1": "OM"})
+        await registry.register("room-1", "OM")
+
+        left = await bot.handle_payload(
+            event(
+                '{"members":[{"userId":"preexisting","nickName":"기존 멤버"}]}',
+                origin="DELMEM",
+                message_id="leave-1",
+            )
+        )
+        rejoined = await bot.handle_payload(
+            event(
+                '{"members":[{"userId":"preexisting","nickName":"새 닉네임"}]}',
+                origin="NEWMEM",
+                message_id="join-1",
+            )
+        )
+
+        self.assertEqual(left, EventOutcome.MEMBER_DEPARTURE_ANNOUNCED)
+        self.assertEqual(rejoined, EventOutcome.MEMBER_WELCOMED)
+        self.assertIn(
+            "최초 입장: 봇 등록 이전 (정확한 시각 확인 불가)",
+            sender.calls[1][1],
+        )
+        self.assertIn("최초 닉네임: 기존 멤버", sender.calls[1][1])
+        self.assertIn(
+            "입장이력:\n봇 등록 이전 (정확한 시각 확인 불가)\n",
+            sender.calls[1][1],
+        )
 
     async def test_same_nickname_members_are_tracked_by_distinct_user_ids(self) -> None:
         tracking = InMemoryTrackingRepository()

@@ -343,9 +343,15 @@ class SQLiteTrackingRepository:
                             current_nickname, join_count, last_joined_at, is_present
                         ) VALUES (?, ?, ?, ?, ?, 1, ?, 1)
                         ON CONFLICT(chat_id, sender_id) DO UPDATE SET
-                            first_joined_at = COALESCE(
-                                room_members.first_joined_at, excluded.first_joined_at
-                            ),
+                            first_joined_at = CASE
+                                WHEN room_members.first_joined_at IS NULL
+                                     AND room_members.join_count > 0
+                                THEN NULL
+                                ELSE COALESCE(
+                                    room_members.first_joined_at,
+                                    excluded.first_joined_at
+                                )
+                            END,
                             first_nickname = COALESCE(
                                 room_members.first_nickname, excluded.first_nickname
                             ),
@@ -389,15 +395,15 @@ class SQLiteTrackingRepository:
                 connection.execute(
                     """
                     INSERT INTO room_members (
-                        chat_id, sender_id, current_nickname, join_count,
-                        last_left_at, is_present
-                    ) VALUES (?, ?, ?, 0, ?, 0)
+                        chat_id, sender_id, first_nickname, current_nickname,
+                        join_count, last_left_at, is_present
+                    ) VALUES (?, ?, ?, ?, 1, ?, 0)
                     ON CONFLICT(chat_id, sender_id) DO UPDATE SET
                         current_nickname = excluded.current_nickname,
                         last_left_at = excluded.last_left_at,
                         is_present = 0
                     """,
-                    (chat_id, sender_id, nickname, value),
+                    (chat_id, sender_id, nickname, nickname, value),
                 )
                 row = connection.execute(
                     "SELECT * FROM room_members WHERE chat_id = ? AND sender_id = ?",
@@ -668,9 +674,15 @@ class PostgresTrackingRepository:
                         current_nickname, join_count, last_joined_at, is_present
                     ) VALUES (%s, %s, %s, %s, %s, 1, %s, TRUE)
                     ON CONFLICT(chat_id, sender_id) DO UPDATE SET
-                        first_joined_at = COALESCE(
-                            room_members.first_joined_at, excluded.first_joined_at
-                        ),
+                        first_joined_at = CASE
+                            WHEN room_members.first_joined_at IS NULL
+                                 AND room_members.join_count > 0
+                            THEN NULL
+                            ELSE COALESCE(
+                                room_members.first_joined_at,
+                                excluded.first_joined_at
+                            )
+                        END,
                         first_nickname = COALESCE(
                             room_members.first_nickname, excluded.first_nickname
                         ),
@@ -717,16 +729,16 @@ class PostgresTrackingRepository:
             row = connection.execute(
                 """
                 INSERT INTO room_members (
-                    chat_id, sender_id, current_nickname, join_count,
-                    last_left_at, is_present
-                ) VALUES (%s, %s, %s, 0, %s, FALSE)
+                    chat_id, sender_id, first_nickname, current_nickname,
+                    join_count, last_left_at, is_present
+                ) VALUES (%s, %s, %s, %s, 1, %s, FALSE)
                 ON CONFLICT(chat_id, sender_id) DO UPDATE SET
                     current_nickname = excluded.current_nickname,
                     last_left_at = excluded.last_left_at,
                     is_present = FALSE
                 RETURNING *
                 """,
-                (chat_id, sender_id, nickname, left_at),
+                (chat_id, sender_id, nickname, nickname, left_at),
             ).fetchone()
         assert row is not None
         return _member_from_row(row)

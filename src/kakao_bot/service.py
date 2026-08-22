@@ -459,11 +459,17 @@ class KakaoBot:
     ) -> str:
         name = member_name or "알 수 없는 사용자"
         first_name = history.first_nickname or "확인 불가"
-        first_join = cls._format_time(history.first_joined_at)
+        first_join = cls._first_join_text(history)
         joined_at_history = history.joined_at_history
-        if not joined_at_history and history.first_joined_at is not None:
+        history_lines: list[str] = []
+        if history.first_joined_at is None and history.join_count > len(
+            joined_at_history
+        ):
+            history_lines.append("봇 등록 이전 (정확한 시각 확인 불가)")
+        elif not joined_at_history and history.first_joined_at is not None:
             joined_at_history = (history.first_joined_at,)
-        history_text = "\n".join(cls._format_time(value) for value in joined_at_history)
+        history_lines.extend(cls._format_time(value) for value in joined_at_history)
+        history_text = "\n".join(history_lines)
         if not history_text:
             history_text = "확인 불가"
         return (
@@ -479,7 +485,7 @@ class KakaoBot:
     ) -> str:
         name = member_name or "알 수 없는 사용자"
         first_name = history.first_nickname or "확인 불가"
-        first_join = cls._format_time(history.first_joined_at)
+        first_join = cls._first_join_text(history)
         reentries = max(0, history.join_count - 1)
         return (
             f"{name}님이 퇴장했습니다.\n"
@@ -487,6 +493,12 @@ class KakaoBot:
             f"최초 닉네임: {first_name}\n"
             f"입장 {history.join_count}회 · 재입장 {reentries}회"
         )
+
+    @classmethod
+    def _first_join_text(cls, history: MemberHistory) -> str:
+        if history.first_joined_at is None and history.join_count > 0:
+            return "봇 등록 이전 (정확한 시각 확인 불가)"
+        return cls._format_time(history.first_joined_at)
 
     def _remember_event(self, event: IrisEvent) -> None:
         if event.message_id:
