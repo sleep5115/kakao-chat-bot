@@ -252,6 +252,98 @@ Lightsail 같은 외부 서버에서는 휴대폰의 사설 IP로 직접 접근�
 - Actions를 Node 24 기반 `checkout@v6`, `setup-python@v6`로 갱신하고 무경고 실행 확인
 - 서버 배포 경로를 Git clone으로 전환하고 기존 수동 배포본은 백업으로 보존
 
+## Discord → KakaoTalk 연동 완료
+
+2026-08-23 Discord 전용 봇과 `/카톡` 슬래시 명령을 구현하고 Lightsail에
+배포해 실제 Discord → KakaoTalk 전송까지 검증했다.
+
+현재 동작:
+
+```text
+Discord 길드에서 /카톡 선택 + 메시지 입력
+→ Discord Gateway
+→ discord-kakao-bot 컨테이너
+→ kakao-bot:8000/internal/discord/messages
+→ Android Iris /reply
+→ 등록된 KakaoTalk 목적 방
+```
+
+- 음악봇을 재사용하지 않고 카톡 연동 전용 Discord 애플리케이션을 새로 생성함
+- Discord 봇은 `discord.py` 기반이며 음성·FFmpeg·yt-dlp 기능을 포함하지 않음
+- 슬래시 명령 이름은 `/카톡`이며 별도 하위 명령은 없음
+- Discord의 서버별 표시 닉네임(`display_name`)을 우선 사용함
+- 서버별 닉네임이 없으면 일반 Discord 표시 이름을 사용함
+- KakaoTalk 출력 형식은 아래와 같음
+
+  ```text
+  디코 홍길동 :
+  입력한 메시지
+  ```
+
+- 운영 목적지는 설정 당시 가장 최근에 등록된 KakaoTalk 방으로 지정함
+- 목적지 방이 현재 등록 상태인지 내부 API에서 다시 확인한 뒤 전송함
+- Discord 길드는 1개로 제한함
+- 현재 채널·사용자·역할 허용 목록은 비어 있어 해당 길드의 모든 채널과 멤버가
+  사용할 수 있음
+- 별도 호출 횟수 제한은 적용하지 않음
+- Discord 응답은 요청자에게만 보이는 ephemeral 메시지로 전송 성공/실패를 알림
+- 봇 토큰, 목적 방 ID와 내부 호출 secret은 Git이 아닌 Lightsail의
+  `/home/ubuntu/.config/kakao-bot/runtime.env`에 mode `600`으로 보관함
+- `discord-kakao-bot`은 별도 컨테이너이며 공용 포트를 열지 않음
+- Discord에는 outbound Gateway WebSocket으로 연결하고 카카오봇과는 Docker
+  내부 네트워크로만 통신함
+- 일반 `guilds` intent만 사용하며 Presence, Server Members, Message Content 같은
+  privileged intent는 사용하지 않음
+- 자동 테스트 73개 통과
+- GitHub Actions 자동배포 성공
+- 최종 운영 상태: `kakao-bot`, `discord-kakao-bot` 모두 `healthy`, restart 0
+- 실제 Discord `/카톡` 명령에서 KakaoTalk 수신 성공 확인
+
+현재 `DISCORD_KAKAO_ROOM_ID`는 고정 설정이다. 이후 다른 방을 새로 등록해도
+목적지가 자동으로 바뀌지는 않으며, 목적지를 바꾸려면 운영 환경변수를 변경하고
+두 서비스를 다시 시작해야 한다.
+
+## 운영 자동배포 구조
+
+코드 배포는 GitHub Actions의
+`.github/workflows/deploy.yml`이 담당한다.
+
+```text
+main에 배포 대상 파일 push
+→ GitHub Actions: Python 3.12 의존성 설치
+→ 전체 pytest 실행
+→ 테스트 성공 시에만 Lightsail SSH 접속
+→ ~/kakao-chat-bot에서 git pull --ff-only origin main
+→ docker compose up -d --build
+→ kakao-bot health + Iris readiness 확인
+→ discord-kakao-bot health + Discord Gateway 연결 확인
+```
+
+자동배포를 실행하는 변경 경로:
+
+- `.github/workflows/deploy.yml`
+- `deploy/lightsail/docker-compose.yml`
+- `src/**`
+- `tests/**`
+- `.dockerignore`
+- `Dockerfile`
+- `pyproject.toml`
+
+따라서 위 경로의 코드·테스트·Docker 설정을 `main`에 push하면 자동배포된다.
+`README.md`나 `docs/**`만 바뀐 문서 전용 커밋은 배포할 필요가 없으므로 Actions를
+실행하지 않는다. 필요하면 GitHub Actions의 `workflow_dispatch`로 수동 실행할 수
+있다.
+
+두 운영 서비스는 같은 저장소와 Docker build context를 사용하지만 별도
+컨테이너로 실행된다.
+
+- `kakao-bot`: FastAPI, Iris WebSocket, 명령·추적·내부 Discord 전송 API
+- `discord-kakao-bot`: Discord Gateway, `/카톡` 명령 처리
+
+두 서비스 모두 Pickty의 외부 Docker network `pickty-infra_default`를 공유하고
+공용 포트는 게시하지 않는다. PostgreSQL과 Valkey 등 기존 Pickty 컨테이너는
+재시작하지 않는다.
+
 집 PC의 ADB 경로:
 
 ```text
@@ -266,13 +358,16 @@ C:\Users\Admin\Android\platform-tools\adb.exe
 - 로컬 FastAPI Backend와 `!핑 → 퐁` 실기기 왕복 완료
 - 마지막 검증 시 ADB 연결, root, Iris 프로세스, TCP 3000, `/config`, WebSocket과 `/reply`가 모두 정상이었음
 - Backend는 Iris 연결 끊김 시 지수 백오프로 자동 재연결함
-- 테스트 오픈채팅방 1개가 일회용 코드로 등록됐고 프로세스 재시작 후에도 등록 상태가 복원됨
+- 여러 오픈채팅방의 등록 정보가 PostgreSQL에 저장되고 프로세스 재시작 후에도 복원됨
 - 환경변수 허용 목록은 방 등록 시스템 위에 적용하는 긴급 제한 기능으로 유지함
 - 운영 PostgreSQL과 등록 데이터 이전은 완료됐으며 Pickty DB/schema는 변경하지 않음
 - Tailscale 연결, 비공개 Iris endpoint, 서버 runtime.env와 운영 봇 기동까지 완료
 - 현재 휴대폰과 Lightsail은 DERP 릴레이 경로를 사용하지만 명령 응답에는 문제 없음
 - Git 기반 자동배포와 Tailscale key expiry 비활성화까지 완료
-- 다음 작업은 채팅 저장 고지·최소 수집·보존 기간을 확정하고 기능 개발을 시작하는 것
+- 삭제 메시지 원문 추적과 입퇴장 누적 이력을 구현하고 실사용 검증 완료
+- Discord `/카톡` → KakaoTalk 전달 기능을 구현하고 실사용 검증 완료
+- 다음 후보 작업은 Discord/Kakao 권한 세분화, 목적지 변경 방식 개선, 운영 백업·
+  알림 또는 AI API 연동
 
 Iris 공식 파일 검증값:
 
@@ -350,7 +445,7 @@ FastAPI에서 Iris WebSocket에 연결해 이벤트를 받고, `!핑` 명령만 
 7. ~~GitHub Actions 자동배포와 Tailscale key expiry 정책 적용~~ — 완료
 8. ~~채팅 저장 고지, 최소 수집 항목과 보존 기간 확정~~ — 완료
 9. ~~기본 게임 명령~~ — 완료
-10. 삭제 메시지 원문 추적과 입퇴장 누적 이력 — 구현 중
+10. ~~삭제 메시지 원문 추적과 입퇴장 누적 이력~~ — 완료
 11. Discord `/카톡` 명령에서 KakaoTalk 방으로 메시지 전달 — 완료
 12. AI API 연동
 
