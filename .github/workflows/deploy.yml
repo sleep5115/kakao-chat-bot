@@ -46,7 +46,6 @@ jobs:
           username: ${{ secrets.LIGHTSAIL_USERNAME }}
           key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
           command_timeout: 20m
-          script_stop: true
           script: |
             set -euo pipefail
             cd "$HOME/kakao-chat-bot"
