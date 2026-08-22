@@ -19,7 +19,7 @@ class _ActiveCode:
 
 
 class RegistrationCodeManager:
-    """Maintains one short-lived, single-use room registration code."""
+    """Maintains one short-lived, single-use room action code."""
 
     def __init__(
         self,
@@ -62,4 +62,3 @@ class RegistrationCodeManager:
 
         self._active = None
         return True
-

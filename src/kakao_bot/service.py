@@ -26,6 +26,7 @@ class EventOutcome(StrEnum):
     REPLIED = "replied"
     BOT_INFO_REPLIED = "bot_info_replied"
     REGISTRATION_CODE_ISSUED = "registration_code_issued"
+    UNREGISTRATION_CODE_ISSUED = "unregistration_code_issued"
     ROOM_REGISTERED = "room_registered"
     ROOM_UNREGISTERED = "room_unregistered"
     MEMBER_WELCOMED = "member_welcomed"
@@ -34,6 +35,7 @@ class EventOutcome(StrEnum):
     ALREADY_REGISTERED = "already_registered"
     NOT_REGISTERED = "not_registered"
     INVALID_REGISTRATION_CODE = "invalid_registration_code"
+    INVALID_UNREGISTRATION_CODE = "invalid_unregistration_code"
     ADMIN_ONLY = "admin_only"
     UNSUPPORTED_ROOM_TYPE = "unsupported_room_type"
     INVALID = "invalid"
@@ -49,7 +51,7 @@ class KakaoBot:
     PRIVACY_NOTICE = (
         "대화 내용, 방 이름, 닉네임, 사용자 ID는 저장하지 않습니다. "
         "방 ID·방 종류·등록 시각만 등록 해제 전까지 보관하며, "
-        "!봇해제를 입력하면 즉시 삭제됩니다."
+        "나와의 채팅에서 !해제코드를 발급해 등록을 해제하면 즉시 삭제됩니다."
     )
 
     def __init__(
@@ -59,6 +61,7 @@ class KakaoBot:
         room_type_resolver: RoomTypeResolver,
         room_registry: RoomRegistry,
         registration_codes: RegistrationCodeManager,
+        unregistration_codes: RegistrationCodeManager,
         game_service: GameService | None = None,
     ) -> None:
         self._settings = settings
@@ -66,6 +69,7 @@ class KakaoBot:
         self._room_type_resolver = room_type_resolver
         self._room_registry = room_registry
         self._registration_codes = registration_codes
+        self._unregistration_codes = unregistration_codes
         self._games = game_service or GameService()
         self._seen_order: deque[str] = deque()
         self._seen_ids: set[str] = set()
@@ -86,11 +90,15 @@ class KakaoBot:
         message = event.message.strip()
         if message == "!등록코드":
             return await self._issue_registration_code(event)
+        if message == "!해제코드":
+            return await self._issue_unregistration_code(event)
         if message == "!봇등록" or message.startswith("!봇등록 "):
             return await self._register_room(event, message)
+        if message == "!봇해제" or message.startswith("!봇해제 "):
+            return await self._unregister_room(event, message)
         game_reply = self._games.handle(message)
         if (
-            message not in {self._settings.bot_command, "!봇정보", "!봇해제"}
+            message not in {self._settings.bot_command, "!봇정보"}
             and game_reply is None
         ):
             return EventOutcome.NOT_COMMAND
@@ -116,18 +124,6 @@ class KakaoBot:
             await self._reply_sender.reply(event.chat_id, self.PRIVACY_NOTICE)
             self._remember_event(event)
             return EventOutcome.BOT_INFO_REPLIED
-
-        if message == "!봇해제":
-            if not registered:
-                return EventOutcome.ADMIN_ONLY
-            await self._room_registry.unregister(event.chat_id)
-            await self._reply_sender.reply(
-                event.chat_id,
-                "봇 등록과 저장된 방 정보가 삭제되었습니다.",
-            )
-            self._remember_event(event)
-            logger.info("Unregistered a chat room and deleted its registration data")
-            return EventOutcome.ROOM_UNREGISTERED
 
         if game_reply is not None:
             await self._reply_sender.reply(event.chat_id, game_reply)
@@ -160,6 +156,23 @@ class KakaoBot:
         logger.info("Issued a one-time room registration code")
         return EventOutcome.REGISTRATION_CODE_ISSUED
 
+    async def _issue_unregistration_code(self, event: IrisEvent) -> EventOutcome:
+        assert event.chat_id is not None
+        room_type = await self._room_type_resolver.get_room_type(event.chat_id)
+        if room_type != "MemoChat":
+            return EventOutcome.ADMIN_ONLY
+
+        code = self._unregistration_codes.issue()
+        minutes = max(1, self._settings.registration_code_ttl_seconds // 60)
+        await self._reply_sender.reply(event.chat_id, f"!봇해제 {code}")
+        await self._reply_sender.reply(
+            event.chat_id,
+            f"{minutes}분 안에 위 명령을 해제할 채팅방에 입력하세요.",
+        )
+        self._remember_event(event)
+        logger.info("Issued a one-time room unregistration code")
+        return EventOutcome.UNREGISTRATION_CODE_ISSUED
+
     async def _register_room(
         self,
         event: IrisEvent,
@@ -191,6 +204,34 @@ class KakaoBot:
         self._remember_event(event)
         logger.info("Registered a chat room for bot commands")
         return EventOutcome.ROOM_REGISTERED
+
+    async def _unregister_room(
+        self,
+        event: IrisEvent,
+        message: str,
+    ) -> EventOutcome:
+        assert event.chat_id is not None
+        parts = message.split()
+        if len(parts) != 2 or len(parts[1]) != 6 or not parts[1].isdigit():
+            return EventOutcome.INVALID_UNREGISTRATION_CODE
+        if (
+            self._settings.allowed_room_ids
+            and event.chat_id not in self._settings.allowed_room_ids
+        ):
+            return EventOutcome.ROOM_NOT_ALLOWED
+        if not await self._room_registry.is_registered(event.chat_id):
+            return EventOutcome.NOT_REGISTERED
+        if not self._unregistration_codes.consume(parts[1], event.chat_id):
+            return EventOutcome.INVALID_UNREGISTRATION_CODE
+
+        await self._room_registry.unregister(event.chat_id)
+        await self._reply_sender.reply(
+            event.chat_id,
+            "봇 등록과 저장된 방 정보가 삭제되었습니다.",
+        )
+        self._remember_event(event)
+        logger.info("Unregistered a chat room and deleted its registration data")
+        return EventOutcome.ROOM_UNREGISTERED
 
     async def _handle_member_event(self, event: IrisEvent) -> EventOutcome:
         assert event.chat_id is not None

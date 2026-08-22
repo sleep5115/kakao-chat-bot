@@ -33,12 +33,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 active_settings.registration_code_max_attempts_per_room
             ),
         )
+        unregistration_codes = RegistrationCodeManager(
+            ttl_seconds=active_settings.registration_code_ttl_seconds,
+            max_attempts_per_room=(
+                active_settings.registration_code_max_attempts_per_room
+            ),
+        )
         bot = KakaoBot(
             active_settings,
             iris_api,
             iris_api,
             room_registry,
             registration_codes,
+            unregistration_codes,
         )
         worker = IrisWebSocketWorker(active_settings, bot.handle_payload)
         worker_task = asyncio.create_task(worker.run(), name="iris-websocket-worker")
