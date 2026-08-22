@@ -139,7 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         await app.state.iris_api.reply(
             room_id,
-            f"디코에서 {sender_name}님이 메시지를 보냈습니다 : {message}",
+            f"디코 {sender_name} :\n{message}",
         )
         logging.getLogger(__name__).info(
             "Forwarded a Discord command to the configured KakaoTalk room"

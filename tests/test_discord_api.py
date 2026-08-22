@@ -68,7 +68,7 @@ class DiscordBridgeEndpointTests(unittest.TestCase):
             [
                 (
                     "123456",
-                    "디코에서 디코 닉님이 메시지를 보냈습니다 : 안녕하세요",
+                    "디코 디코 닉 :\n안녕하세요",
                 )
             ],
         )
