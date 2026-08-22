@@ -54,6 +54,7 @@ class SQLiteRoomRegistry:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database_path, timeout=5)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     def _initialize_sync(self) -> None:

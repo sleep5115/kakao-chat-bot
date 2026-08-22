@@ -52,6 +52,8 @@ class Settings:
     room_database_path: str = "data/kakao_bot.db"
     registration_code_ttl_seconds: int = 600
     registration_code_max_attempts_per_room: int = 5
+    message_retention_days: int = 30
+    message_max_chars: int = 4000
     iris_request_timeout_seconds: float = 5.0
     iris_reconnect_initial_seconds: float = 1.0
     iris_reconnect_max_seconds: float = 30.0
@@ -82,6 +84,12 @@ class Settings:
             registration_code_max_attempts_per_room=_positive_int(
                 "REGISTRATION_CODE_MAX_ATTEMPTS_PER_ROOM",
                 defaults.registration_code_max_attempts_per_room,
+            ),
+            message_retention_days=_positive_int(
+                "MESSAGE_RETENTION_DAYS", defaults.message_retention_days
+            ),
+            message_max_chars=_positive_int(
+                "MESSAGE_MAX_CHARS", defaults.message_max_chars
             ),
             iris_request_timeout_seconds=_positive_float(
                 "IRIS_REQUEST_TIMEOUT_SECONDS", defaults.iris_request_timeout_seconds

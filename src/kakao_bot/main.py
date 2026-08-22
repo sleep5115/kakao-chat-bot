@@ -13,6 +13,7 @@ from .iris import IrisApiClient, IrisWebSocketWorker
 from .registration import RegistrationCodeManager
 from .registry import create_room_registry
 from .service import KakaoBot
+from .tracking import create_tracking_repository
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -27,6 +28,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         iris_api = IrisApiClient(active_settings)
         room_registry = create_room_registry(active_settings)
         await room_registry.initialize()
+        tracking_repository = create_tracking_repository(active_settings)
+        await tracking_repository.initialize()
         registration_codes = RegistrationCodeManager(
             ttl_seconds=active_settings.registration_code_ttl_seconds,
             max_attempts_per_room=(
@@ -44,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             iris_api,
             iris_api,
             room_registry,
+            tracking_repository,
             registration_codes,
             unregistration_codes,
         )
@@ -52,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.iris_api = iris_api
         app.state.iris_worker = worker
         app.state.room_registry = room_registry
+        app.state.tracking_repository = tracking_repository
 
         try:
             yield

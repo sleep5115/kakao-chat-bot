@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime
 
 from kakao_bot.models import IrisEvent
 
@@ -17,6 +18,8 @@ class IrisEventTests(unittest.TestCase):
                     "chat_id": 200,
                     "user_id": 300,
                     "v": '{"origin":"NEWMEM"}',
+                    "type": 0,
+                    "created_at": 1_777_000_000,
                 },
             }
         )
@@ -27,6 +30,8 @@ class IrisEventTests(unittest.TestCase):
         self.assertEqual(event.sender_id, "300")
         self.assertEqual(event.message_id, "100")
         self.assertEqual(event.origin, "NEWMEM")
+        self.assertEqual(event.message_type, "0")
+        self.assertEqual(event.created_at, datetime.fromtimestamp(1_777_000_000, UTC))
 
     def test_accepts_mapping_version_and_id_alias(self) -> None:
         event = IrisEvent.from_payload(

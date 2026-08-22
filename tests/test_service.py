@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime
 
 from kakao_bot.config import Settings
 from kakao_bot.games import GameService
 from kakao_bot.registration import RegistrationCodeManager
 from kakao_bot.registry import RegisteredRoom
 from kakao_bot.service import EventOutcome, KakaoBot
+from kakao_bot.tracking import MemberHistory, TrackedMessage
 
 
 class FakeReplySender:
@@ -18,11 +20,21 @@ class FakeReplySender:
 
 
 class FakeRoomTypeResolver:
-    def __init__(self, room_types: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        room_types: dict[str, str] | None = None,
+        query_rows: list[dict[str, object]] | None = None,
+    ) -> None:
         self.room_types = room_types or {}
+        self.query_rows = query_rows or []
 
     async def get_room_type(self, room_id: str) -> str | None:
         return self.room_types.get(room_id)
+
+    async def query(
+        self, query: str, bind: list[str] | None = None
+    ) -> list[dict[str, object]]:
+        return self.query_rows
 
 
 class InMemoryRoomRegistry:
@@ -45,6 +57,80 @@ class InMemoryRoomRegistry:
         return list(self.rooms.values())
 
 
+class InMemoryTrackingRepository:
+    def __init__(self) -> None:
+        self.messages: dict[tuple[str, str], TrackedMessage] = {}
+        self.members: dict[tuple[str, str], MemberHistory] = {}
+        self.deleted: set[tuple[str, str]] = set()
+
+    async def initialize(self) -> None:
+        return None
+
+    async def save_message(self, message: TrackedMessage) -> None:
+        self.messages.setdefault((message.chat_id, message.message_id), message)
+
+    async def find_message(
+        self, chat_id: str, message_id: str
+    ) -> TrackedMessage | None:
+        return self.messages.get((chat_id, message_id))
+
+    async def mark_deleted(
+        self,
+        chat_id: str,
+        message_id: str,
+        deleted_at: datetime,
+        deleted_by_id: str | None,
+        deleted_by_name: str | None,
+    ) -> None:
+        self.deleted.add((chat_id, message_id))
+
+    async def record_join(
+        self,
+        chat_id: str,
+        sender_id: str,
+        nickname: str | None,
+        joined_at: datetime,
+    ) -> MemberHistory:
+        key = (chat_id, sender_id)
+        previous = self.members.get(key)
+        history = MemberHistory(
+            chat_id=chat_id,
+            sender_id=sender_id,
+            first_joined_at=(previous.first_joined_at if previous else joined_at),
+            first_nickname=(previous.first_nickname if previous else nickname),
+            current_nickname=nickname,
+            join_count=(previous.join_count if previous else 0) + 1,
+            last_joined_at=joined_at,
+            last_left_at=previous.last_left_at if previous else None,
+            is_present=True,
+        )
+        self.members[key] = history
+        return history
+
+    async def record_leave(
+        self,
+        chat_id: str,
+        sender_id: str,
+        nickname: str | None,
+        left_at: datetime,
+    ) -> MemberHistory:
+        key = (chat_id, sender_id)
+        previous = self.members.get(key)
+        history = MemberHistory(
+            chat_id=chat_id,
+            sender_id=sender_id,
+            first_joined_at=previous.first_joined_at if previous else None,
+            first_nickname=previous.first_nickname if previous else None,
+            current_nickname=nickname,
+            join_count=previous.join_count if previous else 0,
+            last_joined_at=previous.last_joined_at if previous else None,
+            last_left_at=left_at,
+            is_present=False,
+        )
+        self.members[key] = history
+        return history
+
+
 def event(
     message: str = "!핑",
     *,
@@ -53,8 +139,15 @@ def event(
     sender_id: str = "sender-1",
     sender_name: str = "sender",
     origin: str | None = None,
+    created_at: int = 1_777_000_000,
+    message_type: int = 1,
 ) -> dict[str, object]:
-    row: dict[str, object] = {"_id": message_id, "user_id": sender_id}
+    row: dict[str, object] = {
+        "_id": message_id,
+        "user_id": sender_id,
+        "created_at": created_at,
+        "type": message_type,
+    }
     if chat_id is not None:
         row["chat_id"] = chat_id
     if origin is not None:
@@ -66,10 +159,13 @@ def create_bot(
     *,
     settings: Settings | None = None,
     room_types: dict[str, str] | None = None,
+    tracking: InMemoryTrackingRepository | None = None,
+    query_rows: list[dict[str, object]] | None = None,
 ) -> tuple[KakaoBot, FakeReplySender, InMemoryRoomRegistry]:
     sender = FakeReplySender()
     registry = InMemoryRoomRegistry()
-    resolver = FakeRoomTypeResolver(room_types)
+    resolver = FakeRoomTypeResolver(room_types, query_rows)
+    tracking_repository = tracking or InMemoryTrackingRepository()
     codes = RegistrationCodeManager(code_factory=lambda: "123456")
     unregistration_codes = RegistrationCodeManager(code_factory=lambda: "654321")
     bot = KakaoBot(
@@ -77,6 +173,7 @@ def create_bot(
         sender,
         resolver,
         registry,
+        tracking_repository,
         codes,
         unregistration_codes,
         GameService(number_picker=lambda upper_bound: 0),
@@ -106,22 +203,91 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         bot, sender, registry = create_bot(room_types={"room-1": "OM"})
         await registry.register("room-1", "OM")
 
-        joined = await bot.handle_payload(
-            event("joined", origin="NEWMEM", sender_name=" 새   멤버 ", message_id="1")
+        first_join = await bot.handle_payload(
+            event("joined", origin="NEWMEM", sender_name=" 첫   닉 ", message_id="1")
         )
         left = await bot.handle_payload(
-            event("left", origin="DELMEM", sender_name="떠난 멤버", message_id="2")
+            event("left", origin="DELMEM", sender_name="현재 닉", message_id="2")
+        )
+        rejoined = await bot.handle_payload(
+            event("joined", origin="NEWMEM", sender_name="새 닉", message_id="3")
         )
 
-        self.assertEqual(joined, EventOutcome.MEMBER_WELCOMED)
+        self.assertEqual(first_join, EventOutcome.MEMBER_WELCOMED)
         self.assertEqual(left, EventOutcome.MEMBER_DEPARTURE_ANNOUNCED)
-        self.assertEqual(
-            sender.calls,
-            [
-                ("room-1", "새 멤버님, 어서 오세요! 👋"),
-                ("room-1", "떠난 멤버님이 퇴장했습니다."),
+        self.assertEqual(rejoined, EventOutcome.MEMBER_WELCOMED)
+        self.assertIn("첫 닉님이 입장했습니다", sender.calls[0][1])
+        self.assertIn("최초 닉네임: 첫 닉", sender.calls[0][1])
+        self.assertIn("첫 입장입니다", sender.calls[0][1])
+        self.assertIn("현재 닉님이 퇴장했습니다", sender.calls[1][1])
+        self.assertIn("입장 1회 · 재입장 0회", sender.calls[1][1])
+        self.assertIn("새 닉님이 입장했습니다", sender.calls[2][1])
+        self.assertIn("최초 닉네임: 첫 닉", sender.calls[2][1])
+        self.assertIn("1번째 재입장입니다", sender.calls[2][1])
+
+    async def test_reports_author_and_content_when_message_is_deleted(self) -> None:
+        tracking = InMemoryTrackingRepository()
+        bot, sender, registry = create_bot(
+            room_types={"room-1": "OM"}, tracking=tracking
+        )
+        await registry.register("room-1", "OM")
+
+        stored = await bot.handle_payload(
+            event(
+                "삭제될 원문",
+                origin="MSG",
+                message_id="100",
+                sender_id="author-1",
+                sender_name="원작성자",
+            )
+        )
+        deleted = await bot.handle_payload(
+            event(
+                '{"logId":"100"}',
+                origin="SYNCDLMSG",
+                message_id="101",
+                sender_id="deleter-1",
+                sender_name="삭제자",
+            )
+        )
+
+        self.assertEqual(stored, EventOutcome.NOT_COMMAND)
+        self.assertEqual(deleted, EventOutcome.MESSAGE_DELETION_REPORTED)
+        self.assertIn("삭제한 사람: 삭제자", sender.calls[0][1])
+        self.assertIn("원 작성자: 원작성자", sender.calls[0][1])
+        self.assertIn("내용: 삭제될 원문", sender.calls[0][1])
+        self.assertIn(("room-1", "100"), tracking.deleted)
+
+    async def test_falls_back_to_iris_for_message_written_before_tracking(self) -> None:
+        bot, sender, registry = create_bot(
+            room_types={"room-1": "OM"},
+            query_rows=[
+                {
+                    "_id": "90",
+                    "chat_id": "room-1",
+                    "user_id": "author-1",
+                    "type": 1,
+                    "message": "배포 전 원문",
+                    "created_at": 1_777_000_000,
+                    "v": '{"origin":"MSG"}',
+                }
             ],
         )
+        await registry.register("room-1", "OM")
+
+        outcome = await bot.handle_payload(
+            event(
+                '{"logId":"90"}',
+                origin="SYNCDLMSG",
+                message_id="91",
+                sender_id="author-1",
+                sender_name="원작성자",
+            )
+        )
+
+        self.assertEqual(outcome, EventOutcome.MESSAGE_DELETION_REPORTED)
+        self.assertIn("원 작성자: 원작성자", sender.calls[0][1])
+        self.assertIn("내용: 배포 전 원문", sender.calls[0][1])
 
     async def test_unregistered_room_ignores_member_events(self) -> None:
         bot, sender, _ = create_bot(room_types={"room-1": "OM"})
@@ -188,7 +354,8 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reused, EventOutcome.INVALID_REGISTRATION_CODE)
         self.assertFalse(await registry.is_registered("other"))
         self.assertEqual(sender.calls[-2], ("target", "봇 등록이 완료되었습니다."))
-        self.assertEqual(sender.calls[-1], ("target", KakaoBot.PRIVACY_NOTICE))
+        self.assertIn("메시지 내용", sender.calls[-1][1])
+        self.assertIn("30일간 저장", sender.calls[-1][1])
 
     async def test_registered_room_can_read_bot_info(self) -> None:
         bot, sender, registry = create_bot(room_types={"room-1": "OM"})
@@ -197,7 +364,9 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         outcome = await bot.handle_payload(event("!봇정보"))
 
         self.assertEqual(outcome, EventOutcome.BOT_INFO_REPLIED)
-        self.assertEqual(sender.calls, [("room-1", KakaoBot.PRIVACY_NOTICE)])
+        self.assertEqual(len(sender.calls), 1)
+        self.assertIn("메시지 내용", sender.calls[0][1])
+        self.assertIn("30일간 저장", sender.calls[0][1])
 
     async def test_unregistered_room_cannot_make_bot_reply_with_info_command(self) -> None:
         bot, sender, _ = create_bot(room_types={"room-1": "OM"})

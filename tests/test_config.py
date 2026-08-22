@@ -15,6 +15,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.iris_base_url, "http://127.0.0.1:3000")
         self.assertEqual(settings.iris_websocket_url, "ws://127.0.0.1:3000/ws")
         self.assertEqual(settings.bot_command, "!핑")
+        self.assertEqual(settings.message_retention_days, 30)
 
     def test_https_base_url_becomes_secure_websocket(self) -> None:
         settings = Settings(iris_base_url="https://example.test/iris")
@@ -61,6 +62,17 @@ class SettingsTests(unittest.TestCase):
         ):
             with self.assertRaises(ConfigError):
                 Settings.from_env()
+
+    def test_tracking_limits_are_configurable(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"MESSAGE_RETENTION_DAYS": "14", "MESSAGE_MAX_CHARS": "2000"},
+            clear=True,
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.message_retention_days, 14)
+        self.assertEqual(settings.message_max_chars, 2000)
 
 
 if __name__ == "__main__":
