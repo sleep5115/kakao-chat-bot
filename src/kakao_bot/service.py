@@ -9,7 +9,7 @@ from typing import Any, Mapping, Protocol
 
 from .config import Settings
 from .games import GameService
-from .models import IrisEvent
+from .models import IrisEvent, IrisMember
 from .registration import RegistrationCodeManager
 from .registry import RoomRegistry
 from .tracking import MemberHistory, TrackedMessage, TrackingRepository
@@ -250,31 +250,40 @@ class KakaoBot:
         if not await self._room_registry.is_registered(event.chat_id):
             return EventOutcome.NOT_REGISTERED
 
-        if event.sender_id is None:
+        members = event.members
+        if not members and event.sender_id is not None:
+            members = (IrisMember(event.sender_id, event.sender_name),)
+        valid_members = [
+            member for member in members if member.user_id is not None
+        ]
+        if not valid_members:
             logger.warning("Ignoring member event because it has no sender_id")
             return EventOutcome.INVALID
 
-        member_name = self._display_name(event.sender_name)
-        if event.origin == "NEWMEM":
-            history = await self._tracking_repository.record_join(
-                event.chat_id,
-                event.sender_id,
-                member_name,
-                event.created_at,
-            )
-            message = self._join_message(member_name, history)
-            outcome = EventOutcome.MEMBER_WELCOMED
-        else:
-            history = await self._tracking_repository.record_leave(
-                event.chat_id,
-                event.sender_id,
-                member_name,
-                event.created_at,
-            )
-            message = self._leave_message(member_name, history)
-            outcome = EventOutcome.MEMBER_DEPARTURE_ANNOUNCED
+        replies: list[str] = []
+        for member in valid_members:
+            assert member.user_id is not None
+            member_name = self._display_name(member.nickname)
+            if event.origin == "NEWMEM":
+                history = await self._tracking_repository.record_join(
+                    event.chat_id,
+                    member.user_id,
+                    member_name,
+                    event.created_at,
+                )
+                replies.append(self._join_message(member_name, history))
+                outcome = EventOutcome.MEMBER_WELCOMED
+            else:
+                history = await self._tracking_repository.record_leave(
+                    event.chat_id,
+                    member.user_id,
+                    member_name,
+                    event.created_at,
+                )
+                replies.append(self._leave_message(member_name, history))
+                outcome = EventOutcome.MEMBER_DEPARTURE_ANNOUNCED
 
-        await self._reply_sender.reply(event.chat_id, message)
+        await self._reply_sender.reply(event.chat_id, "\n\n".join(replies))
         self._remember_event(event)
         logger.info("Replied to a member lifecycle event")
         return outcome
@@ -430,15 +439,17 @@ class KakaoBot:
         name = member_name or "알 수 없는 사용자"
         first_name = history.first_nickname or "확인 불가"
         first_join = cls._format_time(history.first_joined_at)
-        if history.join_count <= 1:
-            status = "첫 입장입니다."
-        else:
-            status = f"{history.join_count - 1}번째 재입장입니다."
+        joined_at_history = history.joined_at_history
+        if not joined_at_history and history.first_joined_at is not None:
+            joined_at_history = (history.first_joined_at,)
+        history_text = "\n".join(cls._format_time(value) for value in joined_at_history)
+        if not history_text:
+            history_text = "확인 불가"
         return (
-            f"🟢 {name}님이 입장했습니다.\n"
+            f"{name}님이 입장했습니다.\n"
             f"최초 입장: {first_join}\n"
             f"최초 닉네임: {first_name}\n"
-            f"{status}"
+            f"입장이력:\n{history_text}"
         )
 
     @classmethod
@@ -450,7 +461,7 @@ class KakaoBot:
         first_join = cls._format_time(history.first_joined_at)
         reentries = max(0, history.join_count - 1)
         return (
-            f"🔴 {name}님이 퇴장했습니다.\n"
+            f"{name}님이 퇴장했습니다.\n"
             f"최초 입장: {first_join}\n"
             f"최초 닉네임: {first_name}\n"
             f"입장 {history.join_count}회 · 재입장 {reentries}회"

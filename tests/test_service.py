@@ -103,6 +103,9 @@ class InMemoryTrackingRepository:
             last_joined_at=joined_at,
             last_left_at=previous.last_left_at if previous else None,
             is_present=True,
+            joined_at_history=(
+                (previous.joined_at_history if previous else ()) + (joined_at,)
+            ),
         )
         self.members[key] = history
         return history
@@ -126,6 +129,7 @@ class InMemoryTrackingRepository:
             last_joined_at=previous.last_joined_at if previous else None,
             last_left_at=left_at,
             is_present=False,
+            joined_at_history=previous.joined_at_history if previous else (),
         )
         self.members[key] = history
         return history
@@ -218,12 +222,53 @@ class KakaoBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rejoined, EventOutcome.MEMBER_WELCOMED)
         self.assertIn("첫 닉님이 입장했습니다", sender.calls[0][1])
         self.assertIn("최초 닉네임: 첫 닉", sender.calls[0][1])
-        self.assertIn("첫 입장입니다", sender.calls[0][1])
+        self.assertIn("입장이력:", sender.calls[0][1])
         self.assertIn("현재 닉님이 퇴장했습니다", sender.calls[1][1])
         self.assertIn("입장 1회 · 재입장 0회", sender.calls[1][1])
         self.assertIn("새 닉님이 입장했습니다", sender.calls[2][1])
         self.assertIn("최초 닉네임: 첫 닉", sender.calls[2][1])
-        self.assertIn("1번째 재입장입니다", sender.calls[2][1])
+        history_block = sender.calls[2][1].split("입장이력:\n", 1)[1]
+        self.assertEqual(history_block.count("2026-04-24"), 2)
+        self.assertNotIn("🟢", sender.calls[0][1])
+        self.assertNotIn("🔴", sender.calls[1][1])
+
+    async def test_member_event_uses_members_from_iris_feed(self) -> None:
+        bot, sender, registry = create_bot(room_types={"room-1": "OM"})
+        await registry.register("room-1", "OM")
+
+        outcome = await bot.handle_payload(
+            event(
+                '{"feedType":4,"members":['
+                '{"userId":"member-1","nickName":"인사하는 프렌즈"}]}',
+                origin="NEWMEM",
+                sender_name="",
+            )
+        )
+
+        self.assertEqual(outcome, EventOutcome.MEMBER_WELCOMED)
+        self.assertIn("인사하는 프렌즈님이 입장했습니다", sender.calls[0][1])
+        self.assertIn("최초 닉네임: 인사하는 프렌즈", sender.calls[0][1])
+
+    async def test_same_nickname_members_are_tracked_by_distinct_user_ids(self) -> None:
+        tracking = InMemoryTrackingRepository()
+        bot, sender, registry = create_bot(
+            room_types={"room-1": "OM"}, tracking=tracking
+        )
+        await registry.register("room-1", "OM")
+
+        await bot.handle_payload(
+            event(
+                '{"feedType":4,"members":['
+                '{"userId":"member-1","nickName":"같은 닉"},'
+                '{"userId":"member-2","nickName":"같은 닉"}]}',
+                origin="NEWMEM",
+                sender_name="",
+            )
+        )
+
+        self.assertIn(("room-1", "member-1"), tracking.members)
+        self.assertIn(("room-1", "member-2"), tracking.members)
+        self.assertEqual(sender.calls[0][1].count("같은 닉님이 입장했습니다"), 2)
 
     async def test_reports_author_and_content_when_message_is_deleted(self) -> None:
         tracking = InMemoryTrackingRepository()

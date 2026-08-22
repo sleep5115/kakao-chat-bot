@@ -33,6 +33,7 @@ class MemberHistory:
     last_joined_at: datetime | None
     last_left_at: datetime | None
     is_present: bool
+    joined_at_history: tuple[datetime, ...] = ()
 
 
 class TrackingRepository(Protocol):
@@ -96,7 +97,9 @@ def _message_from_row(row: Any) -> TrackedMessage:
     )
 
 
-def _member_from_row(row: Any) -> MemberHistory:
+def _member_from_row(
+    row: Any, joined_at_history: tuple[datetime, ...] = ()
+) -> MemberHistory:
     return MemberHistory(
         chat_id=str(row["chat_id"]),
         sender_id=str(row["sender_id"]),
@@ -107,6 +110,7 @@ def _member_from_row(row: Any) -> MemberHistory:
         last_joined_at=_as_datetime(row["last_joined_at"]),
         last_left_at=_as_datetime(row["last_left_at"]),
         is_present=bool(row["is_present"]),
+        joined_at_history=joined_at_history,
     )
 
 
@@ -209,6 +213,30 @@ class SQLiteTrackingRepository:
                         FOREIGN KEY (chat_id) REFERENCES registered_rooms(chat_id)
                             ON DELETE CASCADE
                     );
+                    CREATE TABLE IF NOT EXISTS room_member_joins (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chat_id TEXT NOT NULL,
+                        sender_id TEXT NOT NULL,
+                        nickname TEXT,
+                        joined_at TEXT NOT NULL,
+                        UNIQUE (chat_id, sender_id, joined_at),
+                        FOREIGN KEY (chat_id) REFERENCES registered_rooms(chat_id)
+                            ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS room_member_joins_member_idx
+                        ON room_member_joins(chat_id, sender_id, joined_at);
+                    INSERT OR IGNORE INTO room_member_joins (
+                        chat_id, sender_id, nickname, joined_at
+                    )
+                    SELECT chat_id, sender_id, first_nickname, first_joined_at
+                    FROM room_members
+                    WHERE first_joined_at IS NOT NULL;
+                    INSERT OR IGNORE INTO room_member_joins (
+                        chat_id, sender_id, nickname, joined_at
+                    )
+                    SELECT chat_id, sender_id, current_nickname, last_joined_at
+                    FROM room_members
+                    WHERE last_joined_at IS NOT NULL;
                     """
                 )
 
@@ -289,32 +317,55 @@ class SQLiteTrackingRepository:
         value = joined_at.isoformat()
         with closing(self._connect()) as connection:
             with connection:
-                connection.execute(
+                inserted = connection.execute(
                     """
-                    INSERT INTO room_members (
-                        chat_id, sender_id, first_joined_at, first_nickname,
-                        current_nickname, join_count, last_joined_at, is_present
-                    ) VALUES (?, ?, ?, ?, ?, 1, ?, 1)
-                    ON CONFLICT(chat_id, sender_id) DO UPDATE SET
-                        first_joined_at = COALESCE(
-                            room_members.first_joined_at, excluded.first_joined_at
-                        ),
-                        first_nickname = COALESCE(
-                            room_members.first_nickname, excluded.first_nickname
-                        ),
-                        current_nickname = excluded.current_nickname,
-                        join_count = room_members.join_count + 1,
-                        last_joined_at = excluded.last_joined_at,
-                        is_present = 1
+                    INSERT INTO room_member_joins (
+                        chat_id, sender_id, nickname, joined_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(chat_id, sender_id, joined_at) DO NOTHING
                     """,
-                    (chat_id, sender_id, value, nickname, nickname, value),
-                )
+                    (chat_id, sender_id, nickname, value),
+                ).rowcount
+                if inserted:
+                    connection.execute(
+                        """
+                        INSERT INTO room_members (
+                            chat_id, sender_id, first_joined_at, first_nickname,
+                            current_nickname, join_count, last_joined_at, is_present
+                        ) VALUES (?, ?, ?, ?, ?, 1, ?, 1)
+                        ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                            first_joined_at = COALESCE(
+                                room_members.first_joined_at, excluded.first_joined_at
+                            ),
+                            first_nickname = COALESCE(
+                                room_members.first_nickname, excluded.first_nickname
+                            ),
+                            current_nickname = excluded.current_nickname,
+                            join_count = room_members.join_count + 1,
+                            last_joined_at = excluded.last_joined_at,
+                            is_present = 1
+                        """,
+                        (chat_id, sender_id, value, nickname, nickname, value),
+                    )
                 row = connection.execute(
                     "SELECT * FROM room_members WHERE chat_id = ? AND sender_id = ?",
                     (chat_id, sender_id),
                 ).fetchone()
+                history_rows = connection.execute(
+                    """
+                    SELECT joined_at FROM room_member_joins
+                    WHERE chat_id = ? AND sender_id = ?
+                    ORDER BY joined_at
+                    """,
+                    (chat_id, sender_id),
+                ).fetchall()
         assert row is not None
-        return _member_from_row(row)
+        joined_at_history = tuple(
+            value
+            for history_row in history_rows
+            if (value := _as_datetime(history_row["joined_at"])) is not None
+        )
+        return _member_from_row(row, joined_at_history)
 
     def _record_leave_sync(
         self,
@@ -467,6 +518,47 @@ class PostgresTrackingRepository:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS room_member_joins (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL REFERENCES registered_rooms(chat_id)
+                        ON DELETE CASCADE,
+                    sender_id TEXT NOT NULL,
+                    nickname TEXT,
+                    joined_at TIMESTAMPTZ NOT NULL,
+                    UNIQUE (chat_id, sender_id, joined_at)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS room_member_joins_member_idx
+                ON room_member_joins(chat_id, sender_id, joined_at)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO room_member_joins (
+                    chat_id, sender_id, nickname, joined_at
+                )
+                SELECT chat_id, sender_id, first_nickname, first_joined_at
+                FROM room_members
+                WHERE first_joined_at IS NOT NULL
+                ON CONFLICT (chat_id, sender_id, joined_at) DO NOTHING
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO room_member_joins (
+                    chat_id, sender_id, nickname, joined_at
+                )
+                SELECT chat_id, sender_id, current_nickname, last_joined_at
+                FROM room_members
+                WHERE last_joined_at IS NOT NULL
+                ON CONFLICT (chat_id, sender_id, joined_at) DO NOTHING
+                """
+            )
 
     def _save_message_sync(self, message: TrackedMessage) -> None:
         cutoff = datetime.now(UTC) - timedelta(days=self._retention_days)
@@ -534,29 +626,61 @@ class PostgresTrackingRepository:
         joined_at: datetime,
     ) -> MemberHistory:
         with self._connect() as connection:
-            row = connection.execute(
+            inserted = connection.execute(
                 """
-                INSERT INTO room_members (
-                    chat_id, sender_id, first_joined_at, first_nickname,
-                    current_nickname, join_count, last_joined_at, is_present
-                ) VALUES (%s, %s, %s, %s, %s, 1, %s, TRUE)
-                ON CONFLICT(chat_id, sender_id) DO UPDATE SET
-                    first_joined_at = COALESCE(
-                        room_members.first_joined_at, excluded.first_joined_at
-                    ),
-                    first_nickname = COALESCE(
-                        room_members.first_nickname, excluded.first_nickname
-                    ),
-                    current_nickname = excluded.current_nickname,
-                    join_count = room_members.join_count + 1,
-                    last_joined_at = excluded.last_joined_at,
-                    is_present = TRUE
-                RETURNING *
+                INSERT INTO room_member_joins (
+                    chat_id, sender_id, nickname, joined_at
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (chat_id, sender_id, joined_at) DO NOTHING
+                RETURNING id
                 """,
-                (chat_id, sender_id, joined_at, nickname, nickname, joined_at),
+                (chat_id, sender_id, nickname, joined_at),
             ).fetchone()
+            if inserted is not None:
+                row = connection.execute(
+                    """
+                    INSERT INTO room_members (
+                        chat_id, sender_id, first_joined_at, first_nickname,
+                        current_nickname, join_count, last_joined_at, is_present
+                    ) VALUES (%s, %s, %s, %s, %s, 1, %s, TRUE)
+                    ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                        first_joined_at = COALESCE(
+                            room_members.first_joined_at, excluded.first_joined_at
+                        ),
+                        first_nickname = COALESCE(
+                            room_members.first_nickname, excluded.first_nickname
+                        ),
+                        current_nickname = excluded.current_nickname,
+                        join_count = room_members.join_count + 1,
+                        last_joined_at = excluded.last_joined_at,
+                        is_present = TRUE
+                    RETURNING *
+                    """,
+                    (chat_id, sender_id, joined_at, nickname, nickname, joined_at),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    SELECT * FROM room_members
+                    WHERE chat_id = %s AND sender_id = %s
+                    """,
+                    (chat_id, sender_id),
+                ).fetchone()
+            history_rows = connection.execute(
+                """
+                SELECT joined_at FROM room_member_joins
+                WHERE chat_id = %s AND sender_id = %s
+                ORDER BY joined_at
+                """,
+                (chat_id, sender_id),
+            ).fetchall()
         assert row is not None
-        return _member_from_row(row)
+        joined_at_history = tuple(
+            value
+            for history_row in history_rows
+            if (value := _as_datetime(history_row["joined_at"])) is not None
+        )
+        return _member_from_row(row, joined_at_history)
 
     def _record_leave_sync(
         self,

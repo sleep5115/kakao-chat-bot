@@ -45,6 +45,22 @@ class IrisEventTests(unittest.TestCase):
         self.assertEqual(event.message_id, "101")
         self.assertEqual(event.origin, "DELMEM")
 
+    def test_parses_members_from_join_feed_message(self) -> None:
+        event = IrisEvent.from_payload(
+            {
+                "msg": (
+                    '{"feedType":4,"members":['
+                    '{"userId":"member-1","nickName":"인사하는 프렌즈"}]}'
+                ),
+                "json": {"chat_id": 200, "v": {"origin": "NEWMEM"}},
+            }
+        )
+
+        assert event is not None
+        self.assertEqual(len(event.members), 1)
+        self.assertEqual(event.members[0].user_id, "member-1")
+        self.assertEqual(event.members[0].nickname, "인사하는 프렌즈")
+
     def test_rejects_payload_without_string_message(self) -> None:
         self.assertIsNone(IrisEvent.from_payload({"json": {"chat_id": 1}}))
 

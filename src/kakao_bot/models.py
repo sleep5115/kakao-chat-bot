@@ -33,6 +33,12 @@ def _datetime(value: Any) -> datetime:
 
 
 @dataclass(frozen=True, slots=True)
+class IrisMember:
+    user_id: str | None
+    nickname: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class IrisEvent:
     message: str
     room_name: str | None
@@ -43,6 +49,7 @@ class IrisEvent:
     origin: str | None
     message_type: str | None
     created_at: datetime
+    members: tuple[IrisMember, ...] = ()
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "IrisEvent | None":
@@ -63,6 +70,32 @@ class IrisEvent:
         if not isinstance(version, Mapping):
             version = {}
 
+        members: list[IrisMember] = []
+        try:
+            message_data = json.loads(message)
+        except (json.JSONDecodeError, TypeError):
+            message_data = {}
+        if isinstance(message_data, Mapping):
+            raw_members = message_data.get("members")
+            if isinstance(raw_members, list):
+                for member in raw_members:
+                    if not isinstance(member, Mapping):
+                        continue
+                    members.append(
+                        IrisMember(
+                            user_id=_string(
+                                member.get("userId")
+                                or member.get("user_id")
+                                or member.get("id")
+                            ),
+                            nickname=_string(
+                                member.get("nickName")
+                                or member.get("nickname")
+                                or member.get("name")
+                            ),
+                        )
+                    )
+
         return cls(
             message=message,
             room_name=_string(payload.get("room")),
@@ -73,4 +106,5 @@ class IrisEvent:
             origin=_string(version.get("origin")),
             message_type=_string(row.get("type")),
             created_at=_datetime(row.get("created_at")),
+            members=tuple(members),
         )

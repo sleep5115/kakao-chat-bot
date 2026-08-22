@@ -92,7 +92,22 @@ class SQLiteTrackingRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rejoined.first_nickname, "첫 닉")
         self.assertEqual(rejoined.current_nickname, "새 닉")
         self.assertEqual(rejoined.join_count, 2)
+        self.assertEqual(
+            rejoined.joined_at_history,
+            (first_at, first_at + timedelta(hours=2)),
+        )
         self.assertTrue(rejoined.is_present)
+
+    async def test_duplicate_join_event_does_not_duplicate_history(self) -> None:
+        joined_at = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+
+        await self.tracking.record_join("room-1", "user-1", "닉", joined_at)
+        duplicate = await self.tracking.record_join(
+            "room-1", "user-1", "닉", joined_at
+        )
+
+        self.assertEqual(duplicate.join_count, 1)
+        self.assertEqual(duplicate.joined_at_history, (joined_at,))
 
     async def test_room_deletion_cascades_tracking_records(self) -> None:
         await self.tracking.save_message(
@@ -119,7 +134,11 @@ class SQLiteTrackingRepositoryTests(unittest.IsolatedAsyncioTestCase):
             member_count = connection.execute(
                 "SELECT COUNT(*) FROM room_members"
             ).fetchone()[0]
+            join_count = connection.execute(
+                "SELECT COUNT(*) FROM room_member_joins"
+            ).fetchone()[0]
         self.assertEqual(member_count, 0)
+        self.assertEqual(join_count, 0)
 
 
 class TrackingRepositoryFactoryTests(unittest.TestCase):
